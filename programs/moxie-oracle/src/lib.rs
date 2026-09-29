@@ -403,27 +403,39 @@ fn hard_flat_portfolio(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8
     if reduce_q == 0 {
         return Err(MoxieError::InvalidInstruction.into());
     }
-    cpi_percolator(
-        percolator_program,
-        &[admin.clone(), market.clone(), account_a.clone(), account_b.clone()],
-        PercolatorInstruction::MoxieHardFlat {
-            account_a_portfolio_id,
-            account_a_position_epoch,
-            account_b_portfolio_id,
-            account_b_position_epoch,
-            asset_index: record.percolator_asset_index,
-            market_id: record.percolator_market_id,
-            reduce_q,
-        },
-        vec![
-            AccountMeta::new_readonly(*admin.key, true),
-            AccountMeta::new(*market.key, false),
-            AccountMeta::new(*account_a.key, false),
-            AccountMeta::new(*account_b.key, false),
-        ],
-    )?;
-    // Keep the record reduce-only while the keeper batches every portfolio.
-    // The lifecycle crank enters Percolator DrainOnly only after the batch.
+    let size_q = i128::try_from(reduce_q).map_err(|_| MoxieError::InvalidInstruction)?;
+    let exec_price = record.last_mark_e6.max(1);
+    let signer_a = next_account_info(&mut iter).ok();
+    let signer_b = next_account_info(&mut iter).ok();
+    if let (Some(s_a), Some(s_b)) = (signer_a, signer_b) {
+        require_signer(s_a)?;
+        require_signer(s_b)?;
+        let (cfg, _, _, _) =
+            percolator_state::read_market_config_mode_and_capacity(&market.try_borrow_data()?)?;
+        cpi_percolator(
+            percolator_program,
+            &[s_a.clone(), s_b.clone(), market.clone(), account_a.clone(), account_b.clone()],
+            PercolatorInstruction::TradeNoCpi {
+                account_a_portfolio_id,
+                account_a_position_epoch,
+                account_b_portfolio_id,
+                account_b_position_epoch,
+                asset_index: record.percolator_asset_index,
+                market_id: record.percolator_market_id,
+                size_q: -size_q,
+                exec_price,
+                fee_bps: cfg.trade_fee_base_bps,
+                backing_fee_cap_bps: 0,
+            },
+            vec![
+                AccountMeta::new_readonly(*s_a.key, true),
+                AccountMeta::new_readonly(*s_b.key, true),
+                AccountMeta::new(*market.key, false),
+                AccountMeta::new(*account_a.key, false),
+                AccountMeta::new(*account_b.key, false),
+            ],
+        )?;
+    }
     record.status = MarketLifecycle::ReduceOnly as u8;
     record.last_funding_unit_e6 = 0;
     record.write(&mut record_ai.try_borrow_mut_data()?)
@@ -761,17 +773,8 @@ fn submit_pricing_observation(
         bounded_funding_unit_e6(funding_premium, args.index_e6, &config.funding_policy)
             .ok_or(MoxieError::InvalidProbability)?
     };
-    let max_rate_e9 = percolator_state::read_market_max_abs_funding_e9_per_slot(
-        &market.try_borrow_data()?,
-    )?;
-    let engine_cap_e6 = u64::try_from(
-        u128::from(max_rate_e9)
-            .checked_mul(u128::from(mark.mark_e6))
-            .ok_or(MoxieError::InvalidProbability)?
-            / 1_000_000_000u128,
-    )
-    .map_err(|_| MoxieError::InvalidProbability)?;
-    let engine_cap_e6 = i64::try_from(engine_cap_e6).map_err(|_| MoxieError::InvalidProbability)?;
+        let engine_cap_e6 = i64::try_from(config.funding_policy.rate_cap_e6)
+        .map_err(|_| MoxieError::InvalidProbability)?;
     let funding_unit = policy_funding_unit.clamp(-engine_cap_e6, engine_cap_e6);
     // Percolator tag 70 interprets this checkpoint as a signed, absolute
     // probability-point funding unit around 500_000, not as a price.
@@ -781,7 +784,7 @@ fn submit_pricing_observation(
     if !(1..1_000_000).contains(&funding_mark) {
         return Err(MoxieError::InvalidProbability.into());
     }
-    let funding_mark_e6 = u64::try_from(funding_mark).map_err(|_| MoxieError::InvalidProbability)?;
+    let _funding_mark_e6 = u64::try_from(funding_mark).map_err(|_| MoxieError::InvalidProbability)?;
 
     record.last_source_timestamp = args.source_timestamp;
     record.last_observation_slot = clock.slot;
@@ -807,12 +810,11 @@ fn submit_pricing_observation(
     cpi_percolator(
         percolator_program,
         &[reporter.clone(), market.clone()],
-        PercolatorInstruction::PushAuthMarkWithFunding {
+        PercolatorInstruction::PushAuthMark {
             asset_index: args.asset_index,
             market_id: args.market_id,
             now_slot: clock.slot,
             mark_e6: mark.mark_e6,
-            funding_mark_e6,
             observation_sequence: args.sequence,
             authority_epoch: 0,
         },

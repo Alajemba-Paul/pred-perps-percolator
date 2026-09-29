@@ -13,7 +13,7 @@ export type PortfolioSummary={ownerHex:string;capital:bigint;pnl:bigint;fundingL
 const readU128=(v:DataView,o:number)=>v.getBigUint64(o,true)|(v.getBigUint64(o+8,true)<<64n);
 const readI128=(v:DataView,o:number)=>{const x=readU128(v,o);return x&(1n<<127n)?x-(1n<<128n):x};
 export function decodePortfolioSummary(b:Uint8Array):PortfolioSummary{
- if(b.length<9571)throw new Error("invalid portfolio account");const v=dv(b),base=16,capital=base+100+32,legs=356,legSize=139,healthAt=8852,positions:PortfolioPosition[]=[];
+ if(b.length<9563)throw new Error("invalid portfolio account");const v=dv(b),base=16,capital=base+100+32,legs=356,legSize=139,healthAt=8852,positions:PortfolioPosition[]=[];
  for(let slot=0;slot<16;slot++){const o=legs+slot*legSize;if(b[o]===1)positions.push({slot,assetIndex:v.getUint32(o+1,true),marketId:v.getBigUint64(o+5,true),side:b[o+13] as 0|1,sizeQ:readI128(v,o+14),entryNotional:readU128(v,o+30),stale:b[o+138]===1})}
  const health={equity:readI128(v,healthAt),initialRequirement:readU128(v,healthAt+16),maintenanceRequirement:readU128(v,healthAt+32),liquidationDeficit:readU128(v,healthAt+48),worstCaseLoss:readU128(v,healthAt+64),valid:b[healthAt+120]===1};
  return{ownerHex:hex(b,base+100,32),capital:readU128(v,capital),pnl:readI128(v,capital+16),fundingLongPaid:readU128(v,capital+96),fundingLongReceived:readU128(v,capital+112),fundingShortPaid:readU128(v,capital+128),fundingShortReceived:readU128(v,capital+144),portfolioId:v.getBigUint64(9539,true),sequence:v.getBigUint64(9547,true),positions,health};

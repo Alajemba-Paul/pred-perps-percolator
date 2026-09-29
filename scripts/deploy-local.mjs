@@ -25,7 +25,7 @@ const deploymentPath = devnet
 
 if (devnet) {
   const genesisHash = execFileSync("solana", ["genesis-hash", "--url", rpcUrl], { encoding: "utf8" }).trim();
-  if (genesisHash !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1") {
+ if (genesisHash !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG") {
     throw new Error(`refusing devnet deployment: unexpected genesis hash ${genesisHash}`);
   }
   const balance = execFileSync("solana", ["balance", "--url", rpcUrl], { encoding: "utf8" }).trim();
@@ -33,15 +33,19 @@ if (devnet) {
 }
 
 run("solana", ["--url", rpcUrl, "cluster-version"]);
-run("solana", ["program", "deploy", "--url", rpcUrl, "--program-id",
-  "vendor/percolator-prog/target/deploy/percolator_prog-keypair.json",
-  "vendor/percolator-prog/target/deploy/percolator_prog.so"]);
-run("solana", ["program", "deploy", "--url", rpcUrl, "--program-id",
-  "programs/moxie-matcher/target/deploy/moxie_matcher-keypair.json",
-  "programs/moxie-matcher/target/deploy/moxie_matcher.so"]);
-run("solana", ["program", "deploy", "--url", rpcUrl, "--program-id",
-  "programs/moxie-oracle/target/deploy/moxie_oracle-keypair.json",
-  "programs/moxie-oracle/target/deploy/moxie_oracle.so"]);
+function deployProgram(keypairPath, programSoPath) {
+  const pubkey = execFileSync("solana-keygen", ["pubkey", keypairPath], { encoding: "utf8" }).trim();
+  const show = spawnSync("solana", ["program", "show", pubkey, "--url", rpcUrl], { encoding: "utf8" });
+  if (show.status === 0) {
+    console.log(`program ${pubkey} already deployed on ${rpcUrl}, skipping deploy`);
+    return;
+  }
+  run("solana", ["program", "deploy", "--url", rpcUrl, "--program-id", keypairPath, programSoPath]);
+}
+
+deployProgram("vendor/percolator-prog/target/deploy/percolator_prog-keypair.json", "vendor/percolator-prog/target/deploy/percolator_prog.so");
+deployProgram("programs/moxie-matcher/target/deploy/moxie_matcher-keypair.json", "programs/moxie-matcher/target/deploy/moxie_matcher.so");
+deployProgram("programs/moxie-oracle/target/deploy/moxie_oracle-keypair.json", "programs/moxie-oracle/target/deploy/moxie_oracle.so");
 const solanaConfig = execFileSync("solana", ["config", "get"], { encoding: "utf8" });
 const payerPath = solanaConfig.match(/^Keypair Path:\s+(.+)$/m)?.[1]?.trim();
 if (!payerPath) throw new Error("could not resolve Keypair Path from `solana config get`");

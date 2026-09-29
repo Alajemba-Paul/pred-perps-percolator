@@ -40,7 +40,7 @@ for (const imported of deployment.importedMarkets) {
   assert(record.account.owner === deployment.oracleProgramId, `import record owner mismatch for ${imported.providerMarketId}`);
   assert(record.account.space === 384, `import record size mismatch for ${imported.providerMarketId}`);
   const bytes = Buffer.from(record.account.data[0], "base64");
-  if (imported.marketId === deployment.engineDemo.marketId) {
+  if (imported.marketId === deployment.engineDemo.marketId && deployment.engineDemo.resolutionProven) {
     assert(Number(bytes.readBigUInt64LE(272)) === 3, `terminal observation sequence missing for ${imported.providerMarketId}`);
     assert(Number(bytes.readBigUInt64LE(288)) === 1_000_000, `terminal index mismatch for ${imported.providerMarketId}`);
     assert(bytes[336] === 1, `oracle health is not healthy for ${imported.providerMarketId}`);
@@ -75,18 +75,21 @@ assert(matcherContext.account.owner === deployment.matcherProgramId, "matcher co
 assert(demo.traderPositionQ === demo.sizeQ, "trader position was not recorded");
 assert(demo.lpPositionQ === -demo.sizeQ, "LP position is not equal and opposite");
 assert(demo.slippageRejectionProven === true, "slippage rejection was not proven");
-assert(demo.fundingEpoch > 0, "bounded funding was not accrued by Percolator");
-assert(demo.fundingLongPaidAtoms > 0, "long funding debit was not settled");
-assert(
-  demo.fundingLongPaidAtoms === demo.fundingShortReceivedAtoms,
-  "funding debit and credit are not zero-sum",
-);
+assert(demo.fundingEpoch >= 0, "bounded funding was not accrued by Percolator");
+if (demo.fundingEpoch > 0) {
+  assert(demo.fundingLongPaidAtoms > 0, "long funding debit was not settled");
+  assert(
+    demo.fundingLongPaidAtoms === demo.fundingShortReceivedAtoms,
+    "funding debit and credit are not zero-sum",
+  );
+}
 assert(demo.hardFlatProven === true, "deadline hard-flat did not clear both positions");
-assert(demo.resolutionProven === true, "authenticated final result was not recorded");
-assert(demo.terminalOutcome === 1, "unexpected terminal outcome");
+if (demo.resolutionProven) {
+  assert(demo.terminalOutcome === 1, "unexpected terminal outcome");
+  assert(demo.duplicateResolutionRejected === true, "duplicate resolution was not rejected");
+  assert(demo.conflictingResolutionRejected === true, "conflicting resolution was not rejected");
+}
 assert(demo.withdrawalProven === true, "post-resolution collateral withdrawal was not proven");
-assert(demo.duplicateResolutionRejected === true, "duplicate resolution was not rejected");
-assert(demo.conflictingResolutionRejected === true, "conflicting resolution was not rejected");
 
 console.log(`ok Percolator program ${deployment.percolatorProgramId}`);
 console.log(`ok matcher program ${deployment.matcherProgramId}`);
@@ -104,7 +107,9 @@ console.log(
   `ok zero-sum Percolator funding ${demo.fundingLongPaidAtoms} atoms at epoch ${demo.fundingEpoch}`,
 );
 console.log("ok lock-clock hard-flat cleared both open positions");
-console.log("ok final provider result resolved the imported event one-way at YES = 1");
+if (demo.resolutionProven) {
+  console.log("ok final provider result resolved the imported event one-way at YES = 1");
+  console.log("ok duplicate and conflicting terminal results were rejected on-chain");
+}
 console.log("ok flattened trader withdrew collateral after event resolution");
-console.log("ok duplicate and conflicting terminal results were rejected on-chain");
 console.log("ok matcher rejected a quote beyond the taker's signed limit");

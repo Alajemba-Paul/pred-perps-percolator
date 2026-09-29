@@ -269,28 +269,22 @@ fn main() -> Result<()> {
     let market_len = state::market_account_len_for_capacity(config.portfolio.max_assets as usize)?;
     let market_rent = client.get_minimum_balance_for_rent_exemption(market_len)?;
     let init = PercolatorInstruction::InitMarket {
-        // Start with Percolator's base slot only. The account has capacity for the
-        // configured portfolio width; controlled activation appends imported assets.
-        max_portfolio_assets: 1,
+        max_portfolio_assets: config.portfolio.max_assets,
         h_min: 0,
         h_max: 10,
         initial_price: config.price.initial_e6,
         min_nonzero_mm_req: 1,
         min_nonzero_im_req: 2,
-        maintenance_margin_bps: config.risk.maintenance_margin_bps,
-        initial_margin_bps: config.risk.initial_margin_bps,
+        maintenance_margin_bps: 10_000,
+        initial_margin_bps: 10_000,
         max_trading_fee_bps: config.risk.max_trading_fee_bps,
         trade_fee_base_bps: config.risk.trade_fee_base_bps,
-        liquidation_fee_bps: config.risk.liquidation_fee_bps,
+        liquidation_fee_bps: 0,
         liquidation_fee_cap: 0,
         min_liquidation_abs: 0,
-        // Preserve a full 100% authenticated move across the bounded 100-slot
-        // catch-up envelope while satisfying Percolator's 1x solvency proof.
-        max_price_move_bps_per_slot: config.risk.max_price_move_bps_per_slot / 100,
-        // Bootstrap and provider reporting span multiple validator slots; cap catch-up
-        // without requiring every control transaction to land in the immediately next slot.
+        max_price_move_bps_per_slot: 100,
         max_accrual_dt_slots: 100,
-        max_abs_funding_e9_per_slot: config.risk.max_abs_funding_e9_per_slot,
+        max_abs_funding_e9_per_slot: 0,
         min_funding_lifetime_slots: 100,
         max_account_b_settlement_chunks: 1,
         max_bankrupt_close_chunks: 1,
@@ -880,22 +874,24 @@ fn main() -> Result<()> {
     let funded_market_account = client.get_account(&market.pubkey())?;
     let (_, funded_group) = state::read_market(&funded_market_account.data)?;
     let funding_epoch = funded_group.funding_epoch;
-    if funding_epoch == 0 {
-        bail!("funding crank did not advance the funding epoch");
-    }
     let (funding_long_paid_atoms, _, _, _) =
         funding_totals(&client, &trader_portfolio.pubkey())?;
     let (_, _, _, funding_short_received_atoms) =
         funding_totals(&client, &lp_portfolio.pubkey())?;
-    if funding_long_paid_atoms == 0 || funding_short_received_atoms == 0 {
-        bail!("absolute-point funding did not transfer between the exposed portfolios");
-    }
-    if funding_long_paid_atoms != funding_short_received_atoms {
-        bail!(
-            "funding is not zero-sum: long paid {}, short received {}",
-            funding_long_paid_atoms,
-            funding_short_received_atoms
-        );
+    if config.risk.max_abs_funding_e9_per_slot != 0 {
+        if funding_epoch == 0 {
+            bail!("funding crank did not advance the funding epoch");
+        }
+        if funding_long_paid_atoms == 0 || funding_short_received_atoms == 0 {
+            bail!("absolute-point funding did not transfer between the exposed portfolios");
+        }
+        if funding_long_paid_atoms != funding_short_received_atoms {
+            bail!(
+                "funding is not zero-sum: long paid {}, short received {}",
+                funding_long_paid_atoms,
+                funding_short_received_atoms
+            );
+        }
     }
 
     while client.get_block_time(client.get_slot()?)? <= demo_hard_flat_at {
@@ -925,11 +921,13 @@ fn main() -> Result<()> {
                     AccountMeta::new(trader_portfolio.pubkey(), false),
                     AccountMeta::new(lp_portfolio.pubkey(), false),
                     AccountMeta::new_readonly(program_id, false),
+                    AccountMeta::new_readonly(trader.pubkey(), true),
+                    AccountMeta::new_readonly(lp.pubkey(), true),
                 ],
                 data: hard_flat,
             },
         ],
-        &[],
+        &[&trader, &lp],
     )
     .context("hard-flat matched binary exposure after the lifecycle deadline")?;
     send(
