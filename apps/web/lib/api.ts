@@ -1,105 +1,110 @@
-import { Connection, PublicKey } from "@solana/web3.js";
-import { DEMO_MARKETS, DEMO_PORTFOLIO } from "./demo-data";
-import { toMarket, type ApiMarket, type Market } from "./markets";
 import {
-  DEVNET_DEPLOYMENT,
-  decodeImportedMarket,
-  decodePortfolioSummary,
-} from "./contracts";
-
-export type ApiPosition = {
-  slot: number;
-  assetIndex: number;
-  marketId: string;
-  side: "long" | "short";
-  sizeQ: string;
-  entryNotional: string;
-  stale: boolean;
-};
-
-export type ApiPortfolio = {
-  address: string;
-  owner: string;
-  slot: number;
-  capital: string;
-  pnl: string;
-  health: {
-    valid: boolean;
-    equity: string;
-    initialRequirement: string;
-    maintenanceRequirement: string;
-    liquidationDeficit: string;
-    worstCaseLoss: string;
-  };
-  positions: ApiPosition[];
-};
+  type ApiMarket,
+  type ApiPortfolio,
+  type Market,
+  toMarket,
+} from "./markets";
+import { DEVNET_DEPLOYMENT, decodePortfolioSummary, decodeImportedMarket } from "./contracts";
+import { Connection, PublicKey } from "@solana/web3.js";
+import fs from "fs";
+import path from "path";
 
 const isBrowser = typeof window !== "undefined";
 
-const getBaseUrl = () => {
+function getBaseUrl() {
   if (isBrowser) return "";
-  if (process.env.MOXIE_API_URL) return process.env.MOXIE_API_URL;
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return "http://127.0.0.1:3000";
-};
+  return "http://localhost:3000";
+}
 
+/**
+ * Reads live Jupiter market manifest if available on disk (Node/server only).
+ */
+function getLocalJupiterManifest() {
+  if (isBrowser) return null;
+  try {
+    const manifestPath = path.resolve(process.cwd(), "deployments/jupiter-live-market.json");
+    if (fs.existsSync(manifestPath)) {
+      return JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    }
+  } catch (e) {
+    // Ignore in browser or non-file environments
+  }
+  return null;
+}
+
+/**
+ * Direct RPC fallback to decode real on-chain Devnet market.
+ * Does NOT return fake dummy markets.
+ */
 async function getDevnetOnchainMarkets(): Promise<Market[]> {
   try {
-    const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEVNET_DEPLOYMENT.rpcUrl || "https://api.devnet.solana.com";
+    const rpcUrl =
+      process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+      DEVNET_DEPLOYMENT.rpcUrl ||
+      "https://api.devnet.solana.com";
     const connection = new Connection(rpcUrl, "confirmed");
-    const recordPubkey = new PublicKey(DEVNET_DEPLOYMENT.importedRecord);
-    const info = await connection.getAccountInfo(recordPubkey);
 
-    if (!info || info.data.length < 384) {
-      console.warn("Devnet record account not found or too small");
-      return DEMO_MARKETS;
+    const marketPubkey = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
+    const recordPubkey = new PublicKey(DEVNET_DEPLOYMENT.importedRecord);
+
+    const [marketInfo, recordInfo] = await Promise.all([
+      connection.getAccountInfo(marketPubkey),
+      connection.getAccountInfo(recordPubkey),
+    ]);
+
+    if (!marketInfo || !recordInfo) {
+      console.warn("Devnet market accounts not found on-chain");
+      return [];
     }
 
-    const decoded = decodeImportedMarket(new Uint8Array(info.data));
-    const nowSec = Math.floor(Date.now() / 1000);
-    const remaining = Number(decoded.externalCloseTime) - nowSec;
-    const lock =
-      remaining <= 0
-        ? "Locked"
-        : remaining > 86400
-        ? `${Math.floor(remaining / 86400)}d ${Math.floor((remaining % 86400) / 3600)}h`
-        : `${Math.floor(remaining / 3600)}h`;
+    const decoded = decodeImportedMarket(recordInfo.data);
+    const manifest = getLocalJupiterManifest();
 
-    const cents = (e6: bigint) => Number(e6) / 10_000;
+    const title = manifest?.title || "Dota 2: BetBoom Team vs OG (BO3) — BetBoom Team";
+    const rules =
+      manifest?.rules ||
+      "This market resolves to YES if BetBoom Team wins the BO3 series against OG, otherwise NO.";
+    const closeTime = manifest?.closeTimeMs
+      ? new Date(manifest.closeTimeMs).toISOString()
+      : new Date(Number(decoded.externalCloseTime) * 1000).toISOString();
 
-    const liveMarket: Market = {
-      slug: DEVNET_DEPLOYMENT.importedRecord,
+    const yesMark = Number(decoded.markE6) / 1_000_000;
+    const noMark = Math.max(0, 1 - yesMark);
+
+    const apiMarket: ApiMarket = {
       address: DEVNET_DEPLOYMENT.importedRecord,
-      category: "EVENT",
-      question: "Columbus: Mees Rottgering vs Edward Winter — Mees Rottgering",
-      short: `MARKET #${decoded.marketId}`,
-      provider: "Jupiter / Polymarket (Live Devnet)",
-      moxie: cents(decoded.markE6),
-      index: cents(decoded.indexE6),
-      mark: cents(decoded.markE6),
-      change: null,
-      volume: "ONCHAIN",
-      oi: "ONCHAIN",
-      lock,
-      leverage: "1× (Isolated)",
-      status: decoded.status,
+      providerMarketId: manifest?.providerMarketId || "POLY-4904811-0",
+      title,
+      rules,
+      slot: 0,
+      assetIndex: Number(decoded.assetIndex),
       marketId: decoded.marketId.toString(),
-      assetIndex: decoded.assetIndex,
-      oracleUpdatedAt: new Date().toISOString(),
-      rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
-      providerMarketId: "POLY-5013959-0",
+      status: decoded.status,
+      markE6: decoded.markE6.toString(),
+      indexE6: decoded.indexE6.toString(),
+      closeTime: decoded.externalCloseTime.toString(),
+      oracleUpdatedAt: new Date(Number(decoded.lastSourceTimestamp) * 1000).toISOString(),
     };
+    const liveMarket: Market = toMarket(apiMarket);
 
-    return [liveMarket, ...DEMO_MARKETS.slice(1)];
+    return [liveMarket];
   } catch (err) {
     console.error("Failed to read onchain markets from Devnet RPC:", err);
-    return DEMO_MARKETS;
+    return [];
   }
 }
 
+/**
+ * Fetch markets from indexer, falling back to on-chain Devnet state.
+ * Returns an empty array if both are offline (no fake demo markets).
+ */
+export type { ApiPortfolio, ApiMarket, Market };
+
 export async function getMarkets(): Promise<Market[]> {
   try {
-    // 1. If in browser or running Next.js server, call the internal /api/indexer/markets
+    // 1. Try internal proxy or public indexer
     const url = isBrowser ? "/api/indexer/markets" : `${getBaseUrl()}/api/indexer/markets`;
     const res = await fetch(url, { cache: "no-store" });
     if (res.ok) {
@@ -112,11 +117,14 @@ export async function getMarkets(): Promise<Market[]> {
     console.warn("Failed fetching from /api/indexer/markets:", e);
   }
 
-  // 2. Fallback to direct RPC query
+  // 2. Direct Devnet on-chain query
   return await getDevnetOnchainMarkets();
 }
 
-export async function getMarket(address: string): Promise<Market> {
+/**
+ * Fetch a specific market by slug/address/id.
+ */
+export async function getMarket(address: string): Promise<Market | null> {
   const markets = await getMarkets();
   const found = markets.find(
     (m) =>
@@ -127,66 +135,69 @@ export async function getMarket(address: string): Promise<Market> {
   );
   if (found) return found;
 
-  const demo = DEMO_MARKETS.find((market) => market.slug === address || market.address === address);
-  if (demo) return demo;
+  // If queried by the default deployment record, try direct fetch
+  if (address === DEVNET_DEPLOYMENT.importedRecord) {
+    const fallbackList = await getDevnetOnchainMarkets();
+    if (fallbackList.length > 0) return fallbackList[0];
+  }
 
-  if (markets.length > 0) return markets[0];
-  throw new Error(`Market not found for address ${address}`);
+  return null;
 }
 
-export async function getPortfolio(address: string): Promise<ApiPortfolio> {
+export async function getPortfolio(address: string): Promise<ApiPortfolio | null> {
   const target =
     address === "demo-trader-portfolio" ? DEVNET_DEPLOYMENT.demoTraderPortfolio : address;
 
   try {
     const url = isBrowser
-      ? `/api/indexer/portfolios/${encodeURIComponent(target)}`
-      : `${getBaseUrl()}/api/indexer/portfolios/${encodeURIComponent(target)}`;
+      ? `/api/indexer/portfolios/${target}`
+      : `${getBaseUrl()}/api/indexer/portfolios/${target}`;
     const res = await fetch(url, { cache: "no-store" });
     if (res.ok) {
-      const data: ApiPortfolio = await res.json();
-      return data;
+      return await res.json();
     }
   } catch (e) {
-    console.warn("Could not query portfolio from indexer API:", e);
+    console.warn(`Failed fetching portfolio from indexer for ${target}:`, e);
   }
 
-  // Fallback to direct Devnet RPC query
+  // Direct RPC fallback for portfolio account
   try {
-    const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEVNET_DEPLOYMENT.rpcUrl || "https://api.devnet.solana.com";
+    const rpcUrl =
+      process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+      DEVNET_DEPLOYMENT.rpcUrl ||
+      "https://api.devnet.solana.com";
     const connection = new Connection(rpcUrl, "confirmed");
     const pubkey = new PublicKey(target);
-    const info = await connection.getAccountInfo(pubkey);
-    if (info && info.data.length >= 9563) {
-      const decoded = decodePortfolioSummary(new Uint8Array(info.data));
-      return {
-        address: target,
-        owner: pubkey.toBase58(),
-        slot: await connection.getSlot(),
-        capital: decoded.capital.toString(),
-        pnl: decoded.pnl.toString(),
-        health: {
-          valid: decoded.valid,
-          equity: decoded.equity.toString(),
-          initialRequirement: decoded.initialRequirement.toString(),
-          maintenanceRequirement: decoded.maintenanceRequirement.toString(),
-          liquidationDeficit: decoded.liquidationDeficit.toString(),
-          worstCaseLoss: "0",
-        },
-        positions: decoded.positions.map((p) => ({
-          slot: p.slot,
-          assetIndex: p.assetIndex,
-          marketId: p.marketId,
-          side: p.side,
-          sizeQ: p.sizeQ,
-          entryNotional: p.entryNotional,
-          stale: p.stale,
-        })),
-      };
+    const acc = await connection.getAccountInfo(pubkey);
+    if (!acc || acc.data.length < DEVNET_DEPLOYMENT.portfolioAccountLen) {
+      return null;
     }
-  } catch (e) {
-    console.warn("Direct RPC portfolio query failed:", e);
-  }
 
-  return { ...DEMO_PORTFOLIO, address: target };
+    const decoded = decodePortfolioSummary(acc.data);
+    return {
+      address: target,
+      owner: target,
+      capital: decoded.capital.toString(),
+      pnl: decoded.pnl.toString(),
+      health: {
+        valid: decoded.valid,
+        equity: decoded.equity.toString(),
+        initialRequirement: decoded.initialRequirement.toString(),
+        maintenanceRequirement: decoded.maintenanceRequirement.toString(),
+        liquidationDeficit: decoded.liquidationDeficit.toString(),
+        worstCaseLoss: "0",
+      },
+      positions: decoded.positions.map((p) => ({
+        marketId: p.marketId.toString(),
+        assetIndex: p.assetIndex,
+        side: (p.side === "long" || (p.side as any) === 0) ? "long" : "short",
+        sizeQ: p.sizeQ.toString(),
+        entryNotional: p.entryNotional.toString(),
+        stale: p.stale,
+      })),
+    };
+  } catch (err) {
+    console.error("Direct RPC portfolio fetch error:", err);
+    return null;
+  }
 }

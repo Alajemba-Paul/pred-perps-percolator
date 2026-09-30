@@ -19,6 +19,7 @@ export const DEVNET_DEPLOYMENT = {
   demoTraderPortfolio: "8xTjKWT52eQeSqwuS4mw6DMX7wCMFhVW57tefu11AFSX",
   portfolioAccountLen: 9563,
   portfolioSeed: "moxie",
+  tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
 };
 
 export const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -33,7 +34,10 @@ const u128 = (v: DataView, o: number, x: bigint) => { if (x < 0n) throw new Rang
 
 export const buildCreatePortfolioData = (): Uint8Array => Uint8Array.of(1);
 
-export function buildDepositData(portfolioId: bigint, sequence: bigint, amount: bigint): Uint8Array {
+export function buildDepositData(a: bigint, bOpt?: bigint, cOpt?: bigint): Uint8Array {
+  const portfolioId = cOpt !== undefined ? a : 0n;
+  const sequence = cOpt !== undefined ? (bOpt ?? 0n) : 0n;
+  const amount = cOpt !== undefined ? cOpt : a;
   const b = out(3, 33), v = view(b);
   u64(v, 1, portfolioId);
   u64(v, 9, sequence);
@@ -50,16 +54,16 @@ export function buildWithdrawData(portfolioId: bigint, sequence: bigint, amount:
 }
 
 export type TradeRequest = {
-  traderPortfolioId: bigint;
-  traderPositionEpoch: bigint;
-  lpPortfolioId: bigint;
-  lpPositionEpoch: bigint;
-  lpMatcherSequence: bigint;
   assetIndex: number;
-  marketId: bigint;
   sizeQ: bigint;
-  feeBps: bigint;
   limitPriceE6: bigint;
+  marketId?: bigint;
+  traderPortfolioId?: bigint;
+  traderPositionEpoch?: bigint;
+  lpPortfolioId?: bigint;
+  lpPositionEpoch?: bigint;
+  lpMatcherSequence?: bigint;
+  feeBps?: bigint;
   backingFeeCapBps?: number;
 };
 
@@ -67,14 +71,22 @@ export function buildTradeCpiData(r: TradeRequest): Uint8Array {
   if (!r.sizeQ) throw new Error("trade size cannot be zero");
   const b = out(10, 100), v = view(b);
   let o = 1;
-  for (const x of [r.traderPortfolioId, r.traderPositionEpoch, r.lpPortfolioId, r.lpPositionEpoch, r.lpMatcherSequence]) {
+  const traderPortfolioId = r.traderPortfolioId ?? 0n;
+  const traderPositionEpoch = r.traderPositionEpoch ?? 0n;
+  const lpPortfolioId = r.lpPortfolioId ?? 0n;
+  const lpPositionEpoch = r.lpPositionEpoch ?? 0n;
+  const lpMatcherSequence = r.lpMatcherSequence ?? 0n;
+  const marketId = r.marketId ?? 2n;
+  const feeBps = r.feeBps ?? 30n;
+
+  for (const x of [traderPortfolioId, traderPositionEpoch, lpPortfolioId, lpPositionEpoch, lpMatcherSequence]) {
     u64(v, o, x);
     o += 8;
   }
   u16(v, o, r.assetIndex); o += 2;
-  u64(v, o, r.marketId); o += 8;
+  u64(v, o, marketId); o += 8;
   i128(v, o, r.sizeQ); o += 16;
-  u64(v, o, r.feeBps); o += 8;
+  u64(v, o, feeBps); o += 8;
   u64(v, o, r.limitPriceE6); o += 8;
   u16(v, o, r.backingFeeCapBps ?? 0);
   return b;

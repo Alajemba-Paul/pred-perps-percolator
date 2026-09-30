@@ -1,516 +1,351 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
-  Radio,
-  DatabaseZap,
-  Braces,
+  Globe,
+  Coins,
   ShieldCheck,
-  Clock,
-  ArrowRight,
-  CheckCircle,
-  Copy,
+  Radio,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
-  Layers,
+  Code2,
   Cpu,
-  Server,
-  Zap,
+  Layers,
+  Sparkles,
 } from "lucide-react";
 import { DEVNET_DEPLOYMENT } from "@/lib/contracts";
 
-type Stage = {
-  id: number;
-  badge: string;
-  title: string;
-  subtitle: string;
-  program: "moxie-oracle" | "percolator-prog" | "moxie-matcher" | "indexer";
-  programLabel: string;
-  programAddress: string;
-  description: string;
-  technicalDetails: string[];
-  packet: string;
-};
-
-const stages: Stage[] = [
+const STORY_STEPS = [
   {
-    id: 1,
-    badge: "01 / INGESTION",
-    title: "Jupiter Event Ingestion",
-    subtitle: "Identity, rules & outcome tokens imported",
-    program: "moxie-oracle",
-    programLabel: "moxie-oracle",
-    programAddress: DEVNET_DEPLOYMENT.oracleProgramId,
+    step: 1,
+    title: "1. We copy a real upcoming event from Jupiter",
+    tagline: "Live Event Discovery",
+    icon: Globe,
+    color: "#4ade80",
     description:
-      "A Jupiter prediction market event (e.g. Polymarket Tennis/Crypto) is ingested with its title, rule manifest, YES/NO asset IDs, and deadline close time. The browser never touches Jupiter API directly.",
-    technicalDetails: [
-      "Event hash & rulesHash locked into oracle state",
-      "YES & NO asset IDs mapped to binary outcome tokens",
-      "Reference probability initialized from external liquidity depth",
-    ],
-    packet: "Event: Columbus Mees Rottgering vs Edward Winter -> AssetIndex: 1",
+      "Moxie imports open prediction markets directly from Jupiter on Solana. We preserve the exact event title, settlement rules, and closing deadline so traders have full clarity on how the event will resolve.",
+    example: "Example: \"Dota 2: BetBoom Team vs OG\" with verified ATP / tournament rules and deadline.",
   },
   {
-    id: 2,
-    badge: "02 / ORACLE RECORD",
-    title: "Moxie Oracle & PushAuthMark",
-    subtitle: "Authenticated mark updates Percolator slab",
-    program: "moxie-oracle",
-    programLabel: "moxie-oracle",
-    programAddress: DEVNET_DEPLOYMENT.oracleProgramId,
+    step: 2,
+    title: "2. Our price is the chance YES happens, in cents",
+    tagline: "Probability Pricing",
+    icon: Coins,
+    color: "#60a5fa",
     description:
-      "The Moxie oracle PDA records bounded depth observations. It issues an authenticated CPI `PushAuthMark` into Percolator, updating AuthMark without trusting unverified taker quotes.",
-    technicalDetails: [
-      "Deterministic 384-byte Oracle Record PDA on Solana Devnet",
-      "CPI PushAuthMark sets mark_e6 and observation_sequence",
-      "Solvency guard prevents price manipulation beyond slot envelope",
-    ],
-    packet: "PushAuthMark { asset_index: 1, mark_e6: 958500, seq: 3 }",
+      "Instead of confusing multipliers, the price reflects the live market probability. If YES is trading at 56.5¢, the market estimates a 56.5% probability that the event will happen. NO is priced at the exact opposite (43.5¢).",
+    example: "YES at 56.5¢ = 56.5% chance • NO at 43.5¢ = 43.5% chance.",
   },
   {
-    id: 3,
-    badge: "03 / CLEARING",
-    title: "Trader Signs Order on Percolator",
-    subtitle: "Isolated 1× binary perp cleared on shared slab",
-    program: "percolator-prog",
-    programLabel: "percolator-prog & matcher",
-    programAddress: DEVNET_DEPLOYMENT.percolatorProgramId,
+    step: 3,
+    title: "3. You sign a trade on Solana Devnet with test USDC",
+    tagline: "1-Click Devnet Execution",
+    icon: ShieldCheck,
+    color: "#c7ff4a",
     description:
-      "The trader signs an authenticated Trade transaction against the deployed Percolator program. Atomic CPI matches against the LP counterparty (`moxie-matcher`) with 100% margin solvency checks.",
-    technicalDetails: [
-      "Percolator Instruction tag 10: TradeCpi with 1.4M compute units",
-      "Exact solvency proof enforces 10,000 bps initial & maintenance margin",
-      "Zero-sum position accounting between Trader & LP portfolio",
-    ],
-    packet: "TradeCpi { sizeQ: +1,000,000 (YES), feeBps: 30, limitPrice: 958500 }",
+      "When you choose BUY YES or BUY NO, you sign a single Solana Devnet transaction with your wallet. Your trade is matched against liquidity with 100% margin backing, meaning there is zero risk of systemic bad debt.",
+    example: "You deposit $50 test USDC and receive ~88 YES contracts at 56.5¢.",
   },
   {
-    id: 4,
-    badge: "04 / PROJECTION",
-    title: "Continuous Indexer Projection",
-    subtitle: "Slot-by-slot account sync and REST endpoints",
-    program: "indexer",
-    programLabel: "moxie-indexer",
-    programAddress: "services/indexer (PORT 8787)",
+    step: 4,
+    title: "4. A simple service reads the chain and updates Markets / Portfolio",
+    tagline: "Instant On-Chain Sync",
+    icon: Radio,
+    color: "#a78bfa",
     description:
-      "An independent indexer monitors validator slots, decodes 384-byte market records and 9563-byte portfolio accounts, and serves fast zero-cache REST endpoints `/v1/markets` and `/v1/portfolios`.",
-    technicalDetails: [
-      "Deterministic deserialization of binary SVM account layouts",
-      "Tracks real-time position epochs, capital balances & mark PnL",
-      "Serves Next.js frontend with sub-second health updates",
-    ],
-    packet: "GET /v1/markets/:id -> markE6, indexE6, status, positions",
+      "Once your transaction confirms on Solana, our lightweight indexer detects the on-chain event. Your open position, unrealized profits, and locked margin appear immediately in your Portfolio and on the Trading page.",
+    example: "Real-time updates without trusting off-chain centralized databases.",
   },
   {
-    id: 5,
-    badge: "05 / LIFECYCLE",
-    title: "Deterministic Event Lifecycle",
-    subtitle: "Active → Restricted → Hard-flat → Resolution",
-    program: "moxie-oracle",
-    programLabel: "percolator & oracle lifecycle",
-    programAddress: DEVNET_DEPLOYMENT.oracleProgramId,
+    step: 5,
+    title: "5. When the event ends, YES goes to $1 or $0",
+    tagline: "Terminal Settlement",
+    icon: CheckCircle2,
+    color: "#f472b6",
     description:
-      "Unlike infinite perpetuals, prediction markets have a terminal expiry. Moxie automatically transitions from Active to ReduceOnly, executes lock-clock hard-flat before close, and resolves one-way to 0 or 1.",
-    technicalDetails: [
-      "Active (1) -> Restricted (2) -> ReduceOnly (3) -> Locked (4) -> Resolved (5)",
-      "Automated keeper hard-flat clears open risk before provider lock",
-      "One-way terminal outcome resolves binary perp to 100¢ (YES) or 0¢ (NO)",
-    ],
-    packet: "Lifecycle: Active -> ReduceOnly -> HardFlat -> Resolved(YES = 1)",
+      "Once the real-world match or event concludes, the oracle enters the official outcome. If YES was correct, each YES contract pays out $1.00 and NO goes to $0.00. You can withdraw your settled USDC back to your wallet anytime.",
+    example: "Winning contracts settle at $1.00 full value; losing contracts settle at $0.00.",
   },
 ];
 
 export function TechnologyMotionExplainer() {
-  const [activeStageId, setActiveStageId] = useState(1);
-  const [hoveredProgram, setHoveredProgram] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+  const [activeStep, setActiveStep] = useState(0);
+  const [devDrawerOpen, setDevDrawerOpen] = useState(false);
 
-  // Auto cycle stages
-  useEffect(() => {
-    if (!isPlaying) return;
-    const timer = setInterval(() => {
-      setActiveStageId((prev) => (prev % stages.length) + 1);
-    }, 6000);
-    return () => clearInterval(timer);
-  }, [isPlaying]);
-
-  const activeStage = stages.find((s) => s.id === activeStageId) || stages[0];
-
-  const handleCopy = (address: string) => {
-    navigator.clipboard.writeText(address);
-    setCopiedAddress(address);
-    setTimeout(() => setCopiedAddress(null), 2000);
-  };
+  const current = STORY_STEPS[activeStep];
+  const Icon = current.icon;
 
   return (
-    <div className="motion-explainer-root" style={{ width: "100%", margin: "24px 0" }}>
-      {/* Top Pipeline Steps */}
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px", maxWidth: "920px", margin: "0 auto" }}>
+      {/* 5-Step Timeline Buttons */}
       <div
-        className="pipeline-stepper"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(5, 1fr)",
           gap: "8px",
-          marginBottom: "24px",
+          background: "rgba(255,255,255,0.02)",
+          padding: "8px",
+          borderRadius: "8px",
+          border: "1px solid rgba(255,255,255,0.06)",
         }}
       >
-        {stages.map((stage) => {
-          const isActive = stage.id === activeStageId;
+        {STORY_STEPS.map((s, idx) => {
+          const isSelected = activeStep === idx;
+          const StepIcon = s.icon;
           return (
             <button
-              key={stage.id}
+              key={s.step}
               type="button"
-              onClick={() => {
-                setActiveStageId(stage.id);
-                setIsPlaying(false);
-              }}
+              onClick={() => setActiveStep(idx)}
               style={{
-                background: isActive ? "rgba(199, 255, 74, 0.12)" : "rgba(255, 255, 255, 0.03)",
-                border: isActive ? "1px solid #c7ff4a" : "1px solid rgba(255, 255, 255, 0.08)",
-                padding: "12px 14px",
-                borderRadius: "8px",
-                textAlign: "left",
+                background: isSelected ? "rgba(255,255,255,0.08)" : "transparent",
+                border: isSelected ? `1px solid ${s.color}` : "1px solid transparent",
+                borderRadius: "6px",
+                padding: "10px 8px",
                 cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "6px",
                 transition: "all 0.2s ease",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    color: isActive ? "#c7ff4a" : "rgba(255, 255, 255, 0.5)",
-                  }}
-                >
-                  STEP 0{stage.id}
-                </span>
-                {isActive && (
-                  <span
-                    style={{
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: "#c7ff4a",
-                      boxShadow: "0 0 8px #c7ff4a",
-                    }}
-                  />
-                )}
-              </div>
-              <strong
+              <div
                 style={{
-                  display: "block",
-                  fontSize: "13px",
-                  color: isActive ? "#fff" : "rgba(255, 255, 255, 0.8)",
-                  lineHeight: "1.3",
+                  width: "28px",
+                  height: "28px",
+                  borderRadius: "50%",
+                  background: isSelected ? s.color : "rgba(255,255,255,0.06)",
+                  color: isSelected ? "#000" : "rgba(255,255,255,0.6)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "12px",
+                  fontWeight: 700,
                 }}
               >
-                {stage.title}
-              </strong>
+                <StepIcon size={14} />
+              </div>
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: isSelected ? 600 : 400,
+                  color: isSelected ? "#fff" : "rgba(255,255,255,0.6)",
+                  textAlign: "center",
+                  lineHeight: 1.2,
+                }}
+              >
+                Beat {s.step}
+              </span>
             </button>
           );
         })}
       </div>
 
-      {/* Exploded Detail Card */}
+      {/* Main Interactive Stage Card */}
       <div
         style={{
-          background: "rgba(15, 19, 24, 0.85)",
-          border: "1px solid rgba(199, 255, 74, 0.25)",
-          borderRadius: "12px",
-          padding: "24px",
-          boxShadow: "0 12px 36px rgba(0, 0, 0, 0.4)",
-          backdropFilter: "blur(12px)",
-          display: "grid",
-          gridTemplateColumns: "1.2fr 0.8fr",
-          gap: "24px",
+          background: "rgba(255,255,255,0.03)",
+          border: `1px solid ${current.color}40`,
+          borderRadius: "8px",
+          padding: "32px",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
-        {/* Left: Stage description & technical proof */}
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-            <span
-              style={{
-                fontSize: "11px",
-                fontWeight: 700,
-                color: "#c7ff4a",
-                letterSpacing: "1px",
-              }}
-            >
-              {activeStage.badge}
-            </span>
-            <span style={{ color: "rgba(255,255,255,0.3)" }}>•</span>
-            <span style={{ fontSize: "12px", opacity: 0.7 }}>{activeStage.subtitle}</span>
-          </div>
-
-          <h3 style={{ fontSize: "22px", fontWeight: 700, color: "#fff", marginBottom: "12px" }}>
-            {activeStage.title}
-          </h3>
-
-          <p style={{ fontSize: "14px", lineHeight: "1.6", color: "rgba(255, 255, 255, 0.8)", marginBottom: "20px" }}>
-            {activeStage.description}
-          </p>
-
-          <div style={{ marginBottom: "20px" }}>
-            <span style={{ fontSize: "11px", fontWeight: 700, opacity: 0.6, letterSpacing: "0.5px" }}>
-              ON-CHAIN INVARIANTS & ENFORCEMENT:
-            </span>
-            <ul style={{ listStyle: "none", padding: 0, marginTop: "8px" }}>
-              {activeStage.technicalDetails.map((detail, idx) => (
-                <li
-                  key={idx}
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: "8px",
-                    fontSize: "13px",
-                    color: "rgba(255, 255, 255, 0.85)",
-                    marginBottom: "6px",
-                  }}
-                >
-                  <CheckCircle size={14} color="#c7ff4a" style={{ marginTop: "3px", flexShrink: 0 }} />
-                  <span>{detail}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Wire Protocol Packet Preview */}
-          <div
-            style={{
-              background: "rgba(0, 0, 0, 0.5)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
-              padding: "10px 14px",
-              borderRadius: "6px",
-              fontFamily: "monospace",
-              fontSize: "12px",
-              color: "#c7ff4a",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-            }}
-          >
-            <Zap size={14} />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {activeStage.packet}
-            </span>
-          </div>
-        </div>
-
-        {/* Right: Interactive Program Matrix */}
         <div
           style={{
-            background: "rgba(0, 0, 0, 0.3)",
-            border: "1px solid rgba(255, 255, 255, 0.06)",
-            borderRadius: "8px",
-            padding: "18px",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
+            position: "absolute",
+            top: "-40px",
+            right: "-40px",
+            width: "160px",
+            height: "160px",
+            borderRadius: "50%",
+            background: `${current.color}15`,
+            filter: "blur(40px)",
+            pointerEvents: "none",
           }}
-        >
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, opacity: 0.6, letterSpacing: "1px" }}>
-                EXECUTING PROGRAM NODE
-              </span>
-              <span
-                style={{
-                  fontSize: "11px",
-                  color: "#c7ff4a",
-                  background: "rgba(199, 255, 74, 0.1)",
-                  padding: "2px 8px",
-                  borderRadius: "12px",
-                }}
-              >
-                Solana Devnet
-              </span>
-            </div>
+        />
 
-            {/* Program Card 1: Percolator */}
-            <div
-              onMouseEnter={() => setHoveredProgram("percolator")}
-              onMouseLeave={() => setHoveredProgram(null)}
-              style={{
-                background:
-                  activeStage.program === "percolator-prog" || hoveredProgram === "percolator"
-                    ? "rgba(199, 255, 74, 0.12)"
-                    : "rgba(255, 255, 255, 0.02)",
-                border:
-                  activeStage.program === "percolator-prog" || hoveredProgram === "percolator"
-                    ? "1px solid #c7ff4a"
-                    : "1px solid rgba(255, 255, 255, 0.05)",
-                padding: "10px 12px",
-                borderRadius: "6px",
-                marginBottom: "8px",
-                transition: "all 0.2s ease",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ fontSize: "13px", color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <ShieldCheck size={14} color="#c7ff4a" /> percolator-prog (v16)
-                </strong>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(DEVNET_DEPLOYMENT.percolatorProgramId)}
-                  title="Copy Program ID"
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer" }}
-                >
-                  <Copy size={12} />
-                </button>
-              </div>
-              <code style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)", marginTop: "4px", display: "block" }}>
-                {DEVNET_DEPLOYMENT.percolatorProgramId}
-              </code>
-            </div>
-
-            {/* Program Card 2: Moxie Oracle */}
-            <div
-              onMouseEnter={() => setHoveredProgram("oracle")}
-              onMouseLeave={() => setHoveredProgram(null)}
-              style={{
-                background:
-                  activeStage.program === "moxie-oracle" || hoveredProgram === "oracle"
-                    ? "rgba(199, 255, 74, 0.12)"
-                    : "rgba(255, 255, 255, 0.02)",
-                border:
-                  activeStage.program === "moxie-oracle" || hoveredProgram === "oracle"
-                    ? "1px solid #c7ff4a"
-                    : "1px solid rgba(255, 255, 255, 0.05)",
-                padding: "10px 12px",
-                borderRadius: "6px",
-                marginBottom: "8px",
-                transition: "all 0.2s ease",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ fontSize: "13px", color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <DatabaseZap size={14} color="#c7ff4a" /> moxie-oracle
-                </strong>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(DEVNET_DEPLOYMENT.oracleProgramId)}
-                  title="Copy Program ID"
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer" }}
-                >
-                  <Copy size={12} />
-                </button>
-              </div>
-              <code style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)", marginTop: "4px", display: "block" }}>
-                {DEVNET_DEPLOYMENT.oracleProgramId}
-              </code>
-            </div>
-
-            {/* Program Card 3: Moxie Matcher */}
-            <div
-              onMouseEnter={() => setHoveredProgram("matcher")}
-              onMouseLeave={() => setHoveredProgram(null)}
-              style={{
-                background:
-                  activeStage.program === "moxie-matcher" || hoveredProgram === "matcher"
-                    ? "rgba(199, 255, 74, 0.12)"
-                    : "rgba(255, 255, 255, 0.02)",
-                border:
-                  activeStage.program === "moxie-matcher" || hoveredProgram === "matcher"
-                    ? "1px solid #c7ff4a"
-                    : "1px solid rgba(255, 255, 255, 0.05)",
-                padding: "10px 12px",
-                borderRadius: "6px",
-                marginBottom: "8px",
-                transition: "all 0.2s ease",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ fontSize: "13px", color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <Cpu size={14} color="#c7ff4a" /> moxie-matcher (LP)
-                </strong>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(DEVNET_DEPLOYMENT.matcherProgramId)}
-                  title="Copy Program ID"
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer" }}
-                >
-                  <Copy size={12} />
-                </button>
-              </div>
-              <code style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)", marginTop: "4px", display: "block" }}>
-                {DEVNET_DEPLOYMENT.matcherProgramId}
-              </code>
-            </div>
-
-            {/* Program Card 4: Moxie Indexer */}
-            <div
-              onMouseEnter={() => setHoveredProgram("indexer")}
-              onMouseLeave={() => setHoveredProgram(null)}
-              style={{
-                background:
-                  activeStage.program === "indexer" || hoveredProgram === "indexer"
-                    ? "rgba(199, 255, 74, 0.12)"
-                    : "rgba(255, 255, 255, 0.02)",
-                border:
-                  activeStage.program === "indexer" || hoveredProgram === "indexer"
-                    ? "1px solid #c7ff4a"
-                    : "1px solid rgba(255, 255, 255, 0.05)",
-                padding: "10px 12px",
-                borderRadius: "6px",
-                transition: "all 0.2s ease",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ fontSize: "13px", color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <Server size={14} color="#c7ff4a" /> moxie-indexer service
-                </strong>
-              </div>
-              <code style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)", marginTop: "4px", display: "block" }}>
-                GET /v1/markets • GET /v1/portfolios
-              </code>
-            </div>
-          </div>
-
-          {copiedAddress && (
-            <div
-              style={{
-                fontSize: "11px",
-                color: "#c7ff4a",
-                textAlign: "center",
-                marginTop: "10px",
-                background: "rgba(199, 255, 74, 0.1)",
-                padding: "4px",
-                borderRadius: "4px",
-              }}
-            >
-              Copied to clipboard!
-            </div>
-          )}
-
-          {/* Stepper Controller */}
-          <div
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+          <span
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginTop: "16px",
-              paddingTop: "12px",
-              borderTop: "1px solid rgba(255,255,255,0.06)",
+              fontSize: "11px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              padding: "3px 8px",
+              borderRadius: "4px",
+              background: `${current.color}20`,
+              color: current.color,
             }}
           >
-            <button
-              type="button"
-              onClick={() => setIsPlaying(!isPlaying)}
-              style={{
-                fontSize: "11px",
-                background: "rgba(255,255,255,0.08)",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                padding: "4px 8px",
-                cursor: "pointer",
-              }}
-            >
-              {isPlaying ? "Pause Timeline" : "Auto-Play Timeline"}
-            </button>
-            <span style={{ fontSize: "11px", opacity: 0.6 }}>Stage {activeStageId} of 5</span>
-          </div>
+            {current.tagline}
+          </span>
+          <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>
+            Step {current.step} of 5
+          </span>
         </div>
+
+        <h3 style={{ fontSize: "22px", fontWeight: 700, color: "#fff", margin: "0 0 14px", lineHeight: 1.3 }}>
+          {current.title}
+        </h3>
+
+        <p style={{ fontSize: "15px", color: "rgba(255,255,255,0.8)", margin: "0 0 20px", lineHeight: 1.6, maxWidth: "700px" }}>
+          {current.description}
+        </p>
+
+        <div
+          style={{
+            background: "rgba(0,0,0,0.3)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderRadius: "6px",
+            padding: "12px 16px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "10px",
+            fontSize: "13px",
+            color: "rgba(255,255,255,0.85)",
+          }}
+        >
+          <Sparkles size={16} color={current.color} />
+          <span>{current.example}</span>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "28px", paddingTop: "18px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          <button
+            type="button"
+            onClick={() => setActiveStep((prev) => Math.max(0, prev - 1))}
+            disabled={activeStep === 0}
+            style={{
+              background: "none",
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: activeStep === 0 ? "rgba(255,255,255,0.3)" : "#fff",
+              padding: "6px 14px",
+              borderRadius: "4px",
+              fontSize: "12px",
+              cursor: activeStep === 0 ? "not-allowed" : "pointer",
+            }}
+          >
+            ← Previous
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveStep((prev) => Math.min(STORY_STEPS.length - 1, prev + 1))}
+            disabled={activeStep === STORY_STEPS.length - 1}
+            style={{
+              background: activeStep === STORY_STEPS.length - 1 ? "none" : current.color,
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: activeStep === STORY_STEPS.length - 1 ? "rgba(255,255,255,0.3)" : "#000",
+              fontWeight: 600,
+              padding: "6px 16px",
+              borderRadius: "4px",
+              fontSize: "12px",
+              cursor: activeStep === STORY_STEPS.length - 1 ? "not-allowed" : "pointer",
+            }}
+          >
+            {activeStep === STORY_STEPS.length - 1 ? "Completed" : "Next Beat →"}
+          </button>
+        </div>
+      </div>
+
+      {/* Collapsible "For Developers" Drawer */}
+      <div
+        style={{
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: "8px",
+          background: "rgba(255,255,255,0.02)",
+          overflow: "hidden",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setDevDrawerOpen((prev) => !prev)}
+          style={{
+            width: "100%",
+            padding: "14px 20px",
+            background: "none",
+            border: "none",
+            color: "#fff",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+            fontSize: "14px",
+            fontWeight: 600,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <Code2 size={16} color="#c7ff4a" />
+            <span>For Developers: Program IDs & Architecture Specs</span>
+          </div>
+          {devDrawerOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        </button>
+
+        {devDrawerOpen && (
+          <div style={{ padding: "0 20px 20px", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", gap: "16px" }}>
+            <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)", margin: "14px 0 0", lineHeight: 1.5 }}>
+              Moxie separates event ingestion, probability pricing, and solvency proofs across distinct Solana programs. Below are the verified program IDs deployed on Solana Devnet:
+            </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
+              <div style={{ background: "rgba(0,0,0,0.3)", padding: "12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ fontSize: "11px", color: "#c7ff4a", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+                  Percolator Engine
+                </span>
+                <code style={{ fontSize: "11px", wordBreak: "break-all", color: "rgba(255,255,255,0.85)" }}>
+                  {DEVNET_DEPLOYMENT.percolatorProgramId}
+                </code>
+                <small style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)", display: "block", marginTop: "4px" }}>
+                  v16 solvency clearing slab
+                </small>
+              </div>
+
+              <div style={{ background: "rgba(0,0,0,0.3)", padding: "12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ fontSize: "11px", color: "#60a5fa", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+                  Moxie Matcher
+                </span>
+                <code style={{ fontSize: "11px", wordBreak: "break-all", color: "rgba(255,255,255,0.85)" }}>
+                  {DEVNET_DEPLOYMENT.matcherProgramId}
+                </code>
+                <small style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)", display: "block", marginTop: "4px" }}>
+                  Atomic CPI counterparty matching
+                </small>
+              </div>
+
+              <div style={{ background: "rgba(0,0,0,0.3)", padding: "12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ fontSize: "11px", color: "#a78bfa", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+                  Moxie Oracle
+                </span>
+                <code style={{ fontSize: "11px", wordBreak: "break-all", color: "rgba(255,255,255,0.85)" }}>
+                  {DEVNET_DEPLOYMENT.oracleProgramId}
+                </code>
+                <small style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)", display: "block", marginTop: "4px" }}>
+                  Guarded mark & lifecycle state machine
+                </small>
+              </div>
+
+              <div style={{ background: "rgba(0,0,0,0.3)", padding: "12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ fontSize: "11px", color: "#4ade80", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+                  Collateral Mint (USDC)
+                </span>
+                <code style={{ fontSize: "11px", wordBreak: "break-all", color: "rgba(255,255,255,0.85)" }}>
+                  {DEVNET_DEPLOYMENT.usdcMint}
+                </code>
+                <small style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)", display: "block", marginTop: "4px" }}>
+                  SPL Token 6 decimals
+                </small>
+              </div>
+            </div>
+
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", lineHeight: 1.5, background: "rgba(255,255,255,0.02)", padding: "10px 14px", borderRadius: "4px" }}>
+              <strong>Solvency Envelope Guarantee:</strong> Initial Margin is strictly 10,000 bps (100% collateralized, 1× leverage), guaranteeing exact solvency proofs under Percolator v16 rules where <code>max_price_move_bps_per_slot × max_accrual_dt_slots ≤ 10,000</code>.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

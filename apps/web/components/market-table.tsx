@@ -1,115 +1,236 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, ShieldCheck, Clock, TrendingUp } from "lucide-react";
-import type { Market } from "@/lib/markets";
-import { getStatusLabel } from "@/lib/markets";
+import { type Market, formatProbability, formatPrice, getStatusLabel, getLifecyclePhase } from "@/lib/markets";
+import { ArrowRight, AlertTriangle, RefreshCw, Clock, ShieldCheck, Activity } from "lucide-react";
+import { useState } from "react";
 
-export function MarketTable({ markets }: { markets: Market[] }) {
+export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) {
+  const [markets, setMarkets] = useState<Market[]>(initialMarkets);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    try {
+      const res = await fetch("/api/indexer/markets", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          // Re-map via markets helper if needed
+          window.location.reload();
+        }
+      }
+    } catch (e) {
+      console.error("Refresh error:", e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  if (!markets || markets.length === 0) {
+    return (
+      <div
+        style={{
+          border: "1px solid rgba(255, 77, 77, 0.4)",
+          background: "rgba(255, 77, 77, 0.05)",
+          borderRadius: "8px",
+          padding: "36px 24px",
+          textAlign: "center",
+          margin: "24px 0",
+        }}
+      >
+        <div style={{ display: "inline-flex", padding: "12px", background: "rgba(255, 77, 77, 0.1)", borderRadius: "50%", color: "#ff4d4d", marginBottom: "12px" }}>
+          <AlertTriangle size={32} />
+        </div>
+        <h3 style={{ fontSize: "18px", fontWeight: 600, color: "#fff", marginBottom: "8px" }}>
+          Live markets unavailable — indexer/bootstrap offline
+        </h3>
+        <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", maxWidth: "520px", margin: "0 auto 20px", lineHeight: 1.5 }}>
+          The Moxie indexer is currently unreachable or no imported prediction markets are active on Devnet. Trading is disabled until an active market is indexed.
+        </p>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            background: "#c7ff4a",
+            color: "#000",
+            border: "none",
+            borderRadius: "4px",
+            padding: "8px 16px",
+            fontSize: "13px",
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+          <span>{isRefreshing ? "Checking Indexer..." : "Retry Indexer Connection"}</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="market-table-wrap">
-      <table className="market-table">
-        <thead>
-          <tr>
-            <th>Event / Prediction Market</th>
-            <th>Moxie Mark (YES)</th>
-            <th>Provider Index</th>
-            <th>Leverage Cap</th>
-            <th>Close Time</th>
-            <th>Lifecycle</th>
-            <th style={{ textAlign: "right" }}>Trade</th>
-          </tr>
-        </thead>
-        <tbody>
-          {markets.map((market) => {
-            const statusInfo = getStatusLabel(market.status);
-            return (
-              <tr key={market.slug}>
-                <td>
-                  <Link href={`/trade/${market.slug}`}>
-                    <i className={`market-symbol symbol-${market.category.toLowerCase()}`}>
-                      {market.short.slice(0, 3)}
-                    </i>
-                    <span>
-                      <b>{market.question}</b>
-                      <em>{market.provider} • Market #{market.marketId}</em>
+    <div className="market-table-container">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#c7ff4a", background: "rgba(199,255,74,0.1)", padding: "4px 8px", borderRadius: "4px" }}>
+            <Activity size={12} /> Live Devnet Markets ({markets.length})
+          </span>
+          <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+            1× Isolated Binary Perps
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          style={{
+            background: "none",
+            border: "1px solid rgba(255,255,255,0.15)",
+            color: "rgba(255,255,255,0.8)",
+            padding: "4px 10px",
+            borderRadius: "4px",
+            fontSize: "12px",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+          }}
+        >
+          <RefreshCw size={12} className={isRefreshing ? "animate-spin" : ""} />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <div className="market-cards" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        {markets.map((market) => {
+          const yesPrice = market.currentPrice;
+          const noPrice = Math.max(0, 1 - yesPrice);
+          const phase = getLifecyclePhase(market.status);
+          const isTradable = market.status === "active";
+          const formattedClose = market.closeTime
+            ? new Date(market.closeTime).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : "Until Resolved";
+
+          return (
+            <div
+              key={market.address || market.slug}
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: "8px",
+                padding: "20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "14px",
+                transition: "border-color 0.2s",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        padding: "2px 6px",
+                        borderRadius: "3px",
+                        background: isTradable ? "rgba(199,255,74,0.15)" : "rgba(255,180,0,0.15)",
+                        color: isTradable ? "#c7ff4a" : "#ffb400",
+                      }}
+                    >
+                      {getStatusLabel(market.status)}
                     </span>
-                  </Link>
-                </td>
-                <td>
-                  <strong style={{ color: "#c7ff4a", fontSize: "14px" }}>
-                    {market.moxie.toFixed(1)}¢
+                    <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>
+                      {market.providerMarketId || "Imported Jupiter Market"}
+                    </span>
+                  </div>
+                  <h3 style={{ fontSize: "16px", fontWeight: 600, color: "#fff", margin: 0, lineHeight: 1.4 }}>
+                    {market.title || "Jupiter Prediction Market"}
+                  </h3>
+                </div>
+
+                <Link
+                  href={`/trade/${market.slug || market.address}`}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    background: isTradable ? "#c7ff4a" : "rgba(255,255,255,0.1)",
+                    color: isTradable ? "#000" : "rgba(255,255,255,0.6)",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    padding: "8px 16px",
+                    borderRadius: "4px",
+                    textDecoration: "none",
+                    whiteSpace: "nowrap",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span>Trade</span>
+                  <ArrowRight size={14} />
+                </Link>
+              </div>
+
+              {market.rules && (
+                <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.5, maxHeight: "40px", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {market.rules}
+                </p>
+              )}
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                  gap: "12px",
+                  paddingTop: "12px",
+                  borderTop: "1px solid rgba(255,255,255,0.06)",
+                }}
+              >
+                <div>
+                  <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>YES Mark</small>
+                  <strong style={{ fontSize: "14px", color: "#c7ff4a" }}>
+                    {(yesPrice * 100).toFixed(1)}¢ ({formatProbability(yesPrice)})
                   </strong>
-                </td>
-                <td>
-                  <span style={{ opacity: 0.85 }}>{market.index.toFixed(1)}¢</span>
-                </td>
-                <td>
-                  <span
-                    style={{
-                      background: "rgba(199, 255, 74, 0.1)",
-                      color: "#c7ff4a",
-                      padding: "2px 8px",
-                      borderRadius: "4px",
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "4px",
-                    }}
-                  >
-                    <ShieldCheck size={12} /> 1× Isolated
+                </div>
+
+                <div>
+                  <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>NO Mark</small>
+                  <strong style={{ fontSize: "14px", color: "#ff8474" }}>
+                    {(noPrice * 100).toFixed(1)}¢ ({formatProbability(noPrice)})
+                  </strong>
+                </div>
+
+                <div>
+                  <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>Closes / Resolution</small>
+                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.8)", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                    <Clock size={12} /> {formattedClose}
                   </span>
-                </td>
-                <td>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", opacity: 0.8 }}>
-                    <Clock size={12} /> {market.lock}
+                </div>
+
+                <div>
+                  <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>Risk / Leverage</small>
+                  <span style={{ fontSize: "12px", color: "#c7ff4a", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                    <ShieldCheck size={12} /> 1× Isolated Binary Perp
                   </span>
-                </td>
-                <td>
-                  <span
-                    className={`status-pill status-${statusInfo.label.toLowerCase().replace(" ", "-")}`}
-                    style={{
-                      display: "inline-block",
-                      padding: "2px 8px",
-                      borderRadius: "12px",
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      background: statusInfo.tradable ? "rgba(199,255,74,0.15)" : "rgba(255,180,0,0.15)",
-                      color: statusInfo.tradable ? "#c7ff4a" : "#ffb400",
-                    }}
-                  >
-                    {statusInfo.label}
-                  </span>
-                </td>
-                <td style={{ textAlign: "right" }}>
-                  <Link
-                    className="row-action"
-                    aria-label={`Trade ${market.question}`}
-                    href={`/trade/${market.slug}`}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "4px",
-                      padding: "6px 12px",
-                      background: "rgba(199,255,74,0.1)",
-                      border: "1px solid rgba(199,255,74,0.3)",
-                      borderRadius: "4px",
-                      color: "#c7ff4a",
-                      fontSize: "12px",
-                      fontWeight: 600,
-                      textDecoration: "none",
-                    }}
-                  >
-                    <span>Trade</span>
-                    <ArrowUpRight size={14} />
-                  </Link>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

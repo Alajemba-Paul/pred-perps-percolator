@@ -1,57 +1,40 @@
-import { AppShell } from "@/components/app-shell";
+import { SiteHeader } from "@/components/site-header";
 import { TechnologyMotionExplainer } from "@/components/technology-motion-explainer";
+
+export const metadata = {
+  title: "How Moxie Works | Moxie Prediction Perps",
+  description: "A simple 5-step walkthrough of how Moxie imports prediction markets and settles them on Solana Devnet.",
+};
 
 export default function TechnologyPage() {
   return (
-    <AppShell>
-      <div className="technology-page" style={{ padding: "40px 24px", maxWidth: "1280px", margin: "0 auto" }}>
-        <section className="technology-hero">
-          <p className="eyebrow">THE ARCHITECTURE</p>
-          <h1>
-            Every trade has<br />
-            <span>a cryptographic chain of proof.</span>
+    <div className="app-shell">
+      <SiteHeader />
+      <main className="content-surface">
+        <header className="page-header" style={{ marginBottom: "28px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+            <span style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#c7ff4a", background: "rgba(199,255,74,0.1)", padding: "2px 8px", borderRadius: "4px" }}>
+              How Moxie Works
+            </span>
+            <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>
+              Plain Language Walkthrough
+            </span>
+          </div>
+          <h1 style={{ fontSize: "30px", fontWeight: 700, margin: "0 0 10px" }}>
+            From Event Discovery to Final Settlement
           </h1>
-          <p>
-            Moxie separates event discovery, price formation and solvency — then makes the boundary between them visible.
-            Operating exclusively on Solana Devnet.
+          <p style={{ fontSize: "15px", color: "rgba(255,255,255,0.75)", margin: 0, maxWidth: "680px", lineHeight: 1.5 }}>
+            Moxie lets you trade prediction outcomes like perpetual contracts with test USDC on Solana Devnet. Here is how the pipeline works from start to finish.
           </p>
-          <div className="tech-status">
-            <span><i /> ORACLE REPORTER</span>
-            <span><i /> MATCHER DELEGATE</span>
-            <span><i /> PERCOLATOR V16</span>
-            <em>DEVNET LIVE</em>
-          </div>
-        </section>
+        </header>
 
-        <section style={{ margin: "40px 0" }}>
-          <TechnologyMotionExplainer />
-        </section>
+        <TechnologyMotionExplainer />
 
-        <section className="truth-table">
-          <div>
-            <p className="section-index">RESPONSIBILITY BOUNDARIES</p>
-            <h2>Know what moves what.</h2>
-          </div>
-          <dl>
-            <div>
-              <dt>External Venue (Jupiter / Polymarket)</dt>
-              <dd>Event definition, outcome token IDs, rules manifest and external reference probability.</dd>
-            </div>
-            <div>
-              <dt>Moxie Oracle Record</dt>
-              <dd>Authenticated observation sequences published via CPI PushAuthMark into Percolator.</dd>
-            </div>
-            <div>
-              <dt>Moxie Matcher (LP)</dt>
-              <dd>Taker-signed TradeCpi execution against counterparty context and LP inventory.</dd>
-            </div>
-            <div>
-              <dt>Percolator Engine (v16)</dt>
-              <dd>10,000 bps exact solvency envelope, shared cross-margin collateral, and one-way terminal settlement.</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
-    </AppShell>
+        <footer style={{ marginTop: "48px", paddingTop: "20px", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>
+          <span>Solana Devnet only • Verified on-chain solvency proof</span>
+          <span>1× Isolated Binary Perps</span>
+        </footer>
+      </main>
+    </div>
   );
 }

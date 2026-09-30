@@ -5,11 +5,12 @@ import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { useWallets as usePrivySolanaWallets } from "@privy-io/react-auth/solana";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 
-type PrivyWalletState = {
+export type PrivyWalletState = {
   enabled: boolean;
   ready: boolean;
   authenticated: boolean;
   address: string | null;
+  wallet: any | null;
   login: () => void;
   logout: () => Promise<void>;
 };
@@ -19,6 +20,7 @@ const disabledPrivyState: PrivyWalletState = {
   ready: true,
   authenticated: false,
   address: null,
+  wallet: null,
   login: () => undefined,
   logout: async () => undefined,
 };
@@ -36,6 +38,7 @@ function PrivyWalletBridge({ children }: { children: ReactNode }) {
         ready,
         authenticated,
         address: wallets[0]?.address ?? null,
+        wallet: wallets[0] ?? null,
         login: () => login({ loginMethods: ["email", "google"] }),
         logout,
       }}
