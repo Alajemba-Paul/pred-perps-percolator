@@ -70,10 +70,14 @@ setInterval(async () => {
   }
 }, interval).unref();
 
-const port = Number(process.env.PORT ?? "8787");
+// Parse port strictly, rejecting NaN or <= 0 (e.g. port 0 binds an ephemeral port and breaks Render health check)
+const rawPort = Number(process.env.PORT);
+const port = !Number.isNaN(rawPort) && rawPort > 0 ? rawPort : 8787;
 const host = "0.0.0.0";
 
 const server = createIndexerApi(indexer.store);
 server.listen(port, host, () => {
-  console.log(`[indexer] Moxie indexer API listening on http://${host}:${port}`);
+  const addr = server.address();
+  const actualPort = typeof addr === "object" && addr?.port ? addr.port : port;
+  console.log(`[indexer] Moxie indexer API listening on http://${host}:${actualPort}`);
 });

@@ -2,14 +2,23 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import type { ProjectionStore } from "./store.ts";
 
 function getCorsHeaders(origin: string | undefined): Record<string, string> {
-  const allowed = (process.env.CORS_ORIGIN || "https://moxie-devnet-demo.vercel.app,http://localhost:3000")
+  const defaultAllowed = [
+    "https://moxie-devnet-demo.vercel.app",
+    "http://localhost:3000",
+  ];
+
+  const envOrigins = (process.env.CORS_ORIGIN || "")
     .split(",")
-    .map((s) => s.trim().toLowerCase());
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  const allowed = Array.from(new Set([...defaultAllowed, ...envOrigins]));
+  const reqOrigin = origin ? origin.trim().toLowerCase() : undefined;
 
   const allowOrigin =
-    allowed.includes("*") || (origin && allowed.includes(origin.toLowerCase()))
+    allowed.includes("*") || (reqOrigin && allowed.includes(reqOrigin))
       ? origin || "*"
-      : allowed[0] || "*";
+      : defaultAllowed[0];
 
   return {
     "access-control-allow-origin": allowOrigin,
