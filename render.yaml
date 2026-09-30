@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: moxie-indexer
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: pnpm install
+    startCommand: pnpm indexer:start
+    healthCheckPath: /health
+    envVars:
+      - key: MOXIE_CLUSTER
+        value: devnet
+      - key: SOLANA_RPC_URL
+        value: https://api.devnet.solana.com
+      - key: DEVNET_RPC_URL
+        value: https://api.devnet.solana.com
+      - key: PERCOLATOR_PROGRAM_ID
+        value: Cerk8WwzTJY9YVF9SaHCtUjG15jNGHN26iqyNeUETqnC
+      - key: MOXIE_MATCHER_PROGRAM_ID
+        value: 2w2uQ5t6fmiDybWEP9cdGwHUjA2GqgRUohcqMJcbfgbN
+      - key: MOXIE_ORACLE_PROGRAM_ID
+        value: AecrmxU7nvFAVEAy7LcJbEpTFPXax3ByyouKANGSGuD5
+      - key: MOXIE_USDC_MINT
+        value: 99NrJRkUwMCyo7TqZCq5GgHxhyfw4hQ5Dn7b8L5TxrkQ
+      - key: MOXIE_MARKET_ACCOUNT
+        value: 6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN
+      - key: MOXIE_MARKET_AUTHORITY
+        value: HcPnKBfkcBCw6fyEorVZAhRqWbZ8AqhaSqGkxXe6tUfm
+      - key: CORS_ORIGIN
+        value: https://moxie-devnet-demo.vercel.app,http://localhost:3000

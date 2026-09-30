@@ -1,4 +1,79 @@
-import{createIndexerApi}from"./api.ts";import{MoxieIndexer}from"./indexer.ts";import{loadSnapshot,saveSnapshot}from"./persistence.ts";import{SolanaRpcSource}from"./rpc-source.ts";
-const required=(name:string)=>{const x=process.env[name];if(!x)throw new Error(`${name} is required`);return x};
-const source=new SolanaRpcSource(process.env.SOLANA_RPC_URL??"http://127.0.0.1:8899",required("MOXIE_ORACLE_PROGRAM_ID"),required("PERCOLATOR_PROGRAM_ID"));const indexer=new MoxieIndexer(source);const snapshot=process.env.INDEXER_SNAPSHOT??".data/moxie-index.json";await loadSnapshot(indexer.store,snapshot);await indexer.sync();await saveSnapshot(indexer.store,snapshot);
-const interval=Number(process.env.INDEXER_POLL_MS??"5000");setInterval(async()=>{try{await indexer.sync();await saveSnapshot(indexer.store,snapshot)}catch(e){console.error("indexer sync failed",e)}},interval).unref();const port=Number(process.env.PORT??"8787");createIndexerApi(indexer.store).listen(port,()=>console.log(`Moxie indexer API listening on :${port}`));
+import fs from "node:fs";
+
+// Load .env only if file exists locally (Render supplies env vars via process.env)
+if (fs.existsSync(".env")) {
+  try {
+    process.loadEnvFile(".env");
+  } catch (err) {
+    console.warn("[indexer] Note: could not load local .env:", err);
+  }
+}
+
+import { createIndexerApi } from "./api.ts";
+import { MoxieIndexer } from "./indexer.ts";
+import { loadSnapshot, saveSnapshot } from "./persistence.ts";
+import { SolanaRpcSource } from "./rpc-source.ts";
+
+const required = (name: string) => {
+  const x = process.env[name];
+  if (!x) throw new Error(`${name} is required`);
+  return x;
+};
+
+const rpcUrl =
+  process.env.SOLANA_RPC_URL ||
+  process.env.DEVNET_RPC_URL ||
+  "https://api.devnet.solana.com";
+
+const oracleProgramId = required("MOXIE_ORACLE_PROGRAM_ID");
+const percolatorProgramId = required("PERCOLATOR_PROGRAM_ID");
+
+console.log(`[indexer] Starting Moxie Indexer on cluster: ${process.env.MOXIE_CLUSTER || "devnet"}`);
+console.log(`[indexer] Oracle: ${oracleProgramId}`);
+console.log(`[indexer] Percolator: ${percolatorProgramId}`);
+console.log(`[indexer] RPC: ${rpcUrl.replace(/(api-key|v2)\/[^/?]+/i, "$1/***")}`);
+
+const source = new SolanaRpcSource(rpcUrl, oracleProgramId, percolatorProgramId);
+const indexer = new MoxieIndexer(source);
+const snapshot = process.env.INDEXER_SNAPSHOT ?? ".data/moxie-index.json";
+
+try {
+  const restored = await loadSnapshot(indexer.store, snapshot);
+  if (restored) {
+    console.log(`[indexer] Restored snapshot with ${indexer.store.markets.size} market(s).`);
+  }
+} catch (e) {
+  console.warn("[indexer] Snapshot restore skipped:", e);
+}
+
+try {
+  await indexer.sync();
+  if (indexer.store.markets.size === 0) {
+    console.warn(
+      "[indexer] 0 markets indexed from Solana chain. If bootstrap hasn't run or market account is new, /v1/markets will be empty until on-chain markets are detected."
+    );
+  } else {
+    console.log(`[indexer] Initial sync succeeded: ${indexer.store.markets.size} market(s) active.`);
+  }
+  await saveSnapshot(indexer.store, snapshot);
+} catch (e) {
+  console.error("[indexer] Initial sync failed (will retry in background):", e);
+}
+
+const interval = Number(process.env.INDEXER_POLL_MS ?? "5000");
+setInterval(async () => {
+  try {
+    await indexer.sync();
+    await saveSnapshot(indexer.store, snapshot);
+  } catch (e) {
+    console.error("[indexer] Background sync failed:", e);
+  }
+}, interval).unref();
+
+const port = Number(process.env.PORT ?? "8787");
+const host = "0.0.0.0";
+
+const server = createIndexerApi(indexer.store);
+server.listen(port, host, () => {
+  console.log(`[indexer] Moxie indexer API listening on http://${host}:${port}`);
+});

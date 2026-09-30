@@ -18,12 +18,14 @@ export async function GET(
       ? DEVNET_DEPLOYMENT.demoTraderPortfolio
       : address;
 
-  const indexerBase = process.env.MOXIE_API_URL || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8787" : null);
+  const indexerBase =
+    process.env.MOXIE_API_URL ||
+    (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8787" : null);
 
   if (indexerBase) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
+      const timer = setTimeout(() => controller.abort(), 8000);
       const res = await fetch(`${indexerBase}/v1/portfolios/${encodeURIComponent(targetAddress)}`, {
         cache: "no-store",
         signal: controller.signal,
@@ -40,7 +42,10 @@ export async function GET(
 
   // Fallback: direct Solana Devnet RPC query
   try {
-    const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEVNET_DEPLOYMENT.rpcUrl || "https://api.devnet.solana.com";
+    const rpcUrl =
+      process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+      DEVNET_DEPLOYMENT.rpcUrl ||
+      "https://api.devnet.solana.com";
     const connection = new Connection(rpcUrl, "confirmed");
     const pubkey = new PublicKey(targetAddress);
     const info = await connection.getAccountInfo(pubkey);

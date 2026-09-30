@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 
 function getManifestInfo(): { title: string; rules: string } {
   const defaultInfo = {
-    title: "Columbus: Mees Rottgering vs Edward Winter — Mees Rottgering",
-    rules: "This market refers to the tennis match between Mees Rottgering and Edward Winter in Columbus.\nResolves to 1 (YES) if Mees Rottgering advances, 0 (NO) if Edward Winter advances.",
+    title: "Dota 2: BetBoom Team vs OG (BO3) - BLAST Slam Group C — BetBoom Team",
+    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in the BLAST Slam Group C.\nResolves to 1 (YES) if BetBoom Team wins the match, 0 (NO) if OG wins.",
   };
 
   try {
@@ -35,13 +35,18 @@ function getManifestInfo(): { title: string; rules: string } {
 }
 
 export async function GET() {
-  const indexerBase = process.env.MOXIE_API_URL || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8787" : null);
+  const indexerBase =
+    process.env.MOXIE_API_URL ||
+    (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8787" : null);
 
   if (indexerBase) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`${indexerBase}/v1/markets`, { cache: "no-store", signal: controller.signal });
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${indexerBase}/v1/markets`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
@@ -54,14 +59,17 @@ export async function GET() {
 
   // Fallback: Query Solana Devnet RPC directly
   try {
-    const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEVNET_DEPLOYMENT.rpcUrl || "https://api.devnet.solana.com";
+    const rpcUrl =
+      process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+      DEVNET_DEPLOYMENT.rpcUrl ||
+      "https://api.devnet.solana.com";
     const connection = new Connection(rpcUrl, "confirmed");
     const manifestInfo = getManifestInfo();
 
     const knownAddresses = [
-      DEVNET_DEPLOYMENT.importedRecord,
       "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ",
       "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C",
+      DEVNET_DEPLOYMENT.importedRecord,
     ];
 
     const markets: ApiMarket[] = [];
@@ -77,8 +85,8 @@ export async function GET() {
         markets.push({
           address: knownAddresses[i],
           providerMarketId: `POLY-${decoded.marketId}`,
-          title: i === 0 ? manifestInfo.title : `Columbus: Live Devnet Binary Perp #${decoded.marketId}`,
-          rules: i === 0 ? manifestInfo.rules : "Live devnet binary perp market settled against oracle record.",
+          title: manifestInfo.title,
+          rules: manifestInfo.rules,
           slot: await connection.getSlot(),
           assetIndex: decoded.assetIndex,
           marketId: decoded.marketId.toString(),

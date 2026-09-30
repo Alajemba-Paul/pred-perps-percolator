@@ -26,7 +26,7 @@
     "demo:resolution": "node scripts/not-implemented.mjs demo:resolution 'Phase 11: resolution scenario'",
     "proof:export": "node scripts/not-implemented.mjs proof:export 'Phase 15: proof manifest'",
     "verify:upstream": "node scripts/verify-upstream.mjs",
-    "config:market-group": "node scripts/print-market-group.mjs"
-    ,"indexer:start": "node --env-file=.env --experimental-strip-types services/indexer/src/server.ts"
+    "config:market-group": "node scripts/print-market-group.mjs",
+    "indexer:start": "node --experimental-strip-types services/indexer/src/server.ts"
   }
 }

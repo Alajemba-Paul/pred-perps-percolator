@@ -5,15 +5,13 @@ import { usePathname } from "next/navigation";
 import { Activity } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { WalletControl } from "./wallet-control";
-import { DEVNET_DEPLOYMENT } from "@/lib/contracts";
 
 export function SiteHeader({ floating = false }: { floating?: boolean }) {
   const path = usePathname();
-  const tradeHref = `/trade/${DEVNET_DEPLOYMENT.importedRecord}`;
 
   const links = [
     ["/markets", "Markets"],
-    [tradeHref, "Trade"],
+    ["/trade", "Trade"],
     ["/portfolio", "Portfolio"],
     ["/technology", "Technology"],
   ];

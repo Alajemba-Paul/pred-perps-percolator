@@ -1,27 +1,47 @@
 "use client";
 
 import Link from "next/link";
-import { type Market, formatProbability, formatPrice, getStatusLabel, getLifecyclePhase } from "@/lib/markets";
-import { ArrowRight, AlertTriangle, RefreshCw, Clock, ShieldCheck, Activity } from "lucide-react";
+import { type Market, formatProbability, formatPrice, getStatusLabel, getLifecyclePhase, toMarket } from "@/lib/markets";
+import { ArrowRight, AlertTriangle, RefreshCw, Clock, ShieldCheck, Activity, Info } from "lucide-react";
 import { useState } from "react";
 
 export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) {
   const [markets, setMarkets] = useState<Market[]>(initialMarkets);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [retryStatus, setRetryStatus] = useState<string | null>(null);
 
   async function handleRefresh() {
     setIsRefreshing(true);
+    setRetryStatus("Pinging indexer...");
     try {
+      // First ping markets API
       const res = await fetch("/api/indexer/markets", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-          // Re-map via markets helper if needed
-          window.location.reload();
+        if (Array.isArray(data) && data.length > 0) {
+          setMarkets(data.map(toMarket));
+          setRetryStatus(null);
+          setIsRefreshing(false);
+          return;
         }
       }
+      setRetryStatus("Waking Render indexer (cold start can take 30–60s)...");
+      // Wait 3 seconds and retry once more
+      await new Promise((r) => setTimeout(r, 3000));
+      const secondRes = await fetch("/api/indexer/markets", { cache: "no-store" });
+      if (secondRes.ok) {
+        const secondData = await secondRes.json();
+        if (Array.isArray(secondData) && secondData.length > 0) {
+          setMarkets(secondData.map(toMarket));
+          setRetryStatus(null);
+          setIsRefreshing(false);
+          return;
+        }
+      }
+      window.location.reload();
     } catch (e) {
       console.error("Refresh error:", e);
+      setRetryStatus("Connection failed. Please retry.");
     } finally {
       setIsRefreshing(false);
     }
@@ -45,30 +65,41 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
         <h3 style={{ fontSize: "18px", fontWeight: 600, color: "#fff", marginBottom: "8px" }}>
           Live markets unavailable — indexer/bootstrap offline
         </h3>
-        <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", maxWidth: "520px", margin: "0 auto 20px", lineHeight: 1.5 }}>
+        <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", maxWidth: "540px", margin: "0 auto 12px", lineHeight: 1.5 }}>
           The Moxie indexer is currently unreachable or no imported prediction markets are active on Devnet. Trading is disabled until an active market is indexed.
         </p>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            background: "#c7ff4a",
-            color: "#000",
-            border: "none",
-            borderRadius: "4px",
-            padding: "8px 16px",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
-          <span>{isRefreshing ? "Checking Indexer..." : "Retry Indexer Connection"}</span>
-        </button>
+        <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)", maxWidth: "500px", margin: "0 auto 20px", lineHeight: 1.4, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+          <Info size={13} color="#c7ff4a" />
+          <span>Note: Render free tier spins down after idle. First load after idle can take 30–60s while the service boots.</span>
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              background: "#c7ff4a",
+              color: "#000",
+              border: "none",
+              borderRadius: "4px",
+              padding: "8px 16px",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: isRefreshing ? "wait" : "pointer",
+            }}
+          >
+            <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+            <span>{isRefreshing ? (retryStatus || "Connecting to Render...") : "Retry Indexer Connection"}</span>
+          </button>
+          {retryStatus && (
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)" }}>
+              {retryStatus}
+            </span>
+          )}
+        </div>
       </div>
     );
   }
@@ -110,7 +141,6 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
         {markets.map((market) => {
           const yesPrice = market.currentPrice;
           const noPrice = Math.max(0, 1 - yesPrice);
-          const phase = getLifecyclePhase(market.status);
           const isTradable = market.status === "active";
           const formattedClose = market.closeTime
             ? new Date(market.closeTime).toLocaleDateString(undefined, {

@@ -25,6 +25,7 @@ import {
   PlusCircle,
   ArrowDownLeft,
   Copy,
+  RefreshCw,
 } from "lucide-react";
 import { usePrivyWalletState } from "./wallet-providers";
 import {
@@ -39,6 +40,13 @@ function shortAddress(address: string) {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 8000, errorMsg = "Request timed out"): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs)),
+  ]);
+}
+
 export function WalletControl() {
   const [open, setOpen] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -46,15 +54,24 @@ export function WalletControl() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Deployment configuration state
+  const [faucetConfigured, setFaucetConfigured] = useState<boolean | null>(null);
+
   // Balances & Onchain state
   const [solBalance, setSolBalance] = useState<number | null>(null);
+  const [solLoading, setSolLoading] = useState(false);
+  const [solError, setSolError] = useState<string | null>(null);
+
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
+  const [usdcLoading, setUsdcLoading] = useState(false);
+  const [usdcError, setUsdcError] = useState<string | null>(null);
+
   const [hasPortfolio, setHasPortfolio] = useState<boolean | null>(null);
   const [portfolioData, setPortfolioData] = useState<any | null>(null);
   const [isCreatingPortfolio, setIsCreatingPortfolio] = useState(false);
   const [isDepositing, setIsDepositing] = useState(false);
-  const [isAirdropping, setIsAirdropping] = useState(false);
-  const [faucetLoading, setFaucetLoading] = useState(false);
+  const [isAirdroppingSol, setIsAirdroppingSol] = useState(false);
+  const [faucetUsdcLoading, setFaucetUsdcLoading] = useState(false);
 
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const privy = usePrivyWalletState();
@@ -69,13 +86,29 @@ export function WalletControl() {
   const activeAddress = privy.address || external.publicKey?.toBase58() || null;
   const activePubkey = useMemo(() => (activeAddress ? new PublicKey(activeAddress) : null), [activeAddress]);
 
+  // Load deployment public state
+  useEffect(() => {
+    fetch("/api/deployment")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.faucetConfigured === "boolean") {
+          setFaucetConfigured(data.faucetConfigured);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Unified signer supporting both Privy embedded wallets and standard external adapters
   const signAndSendTransaction = useCallback(
     async (tx: Transaction): Promise<string> => {
       if (!activePubkey) throw new Error("Wallet not connected");
 
       tx.feePayer = activePubkey;
-      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+      const latestBlockhash = await withTimeout(
+        connection.getLatestBlockhash("confirmed"),
+        8000,
+        "Failed to fetch recent blockhash from Devnet RPC"
+      );
       tx.recentBlockhash = latestBlockhash.blockhash;
 
       // 1. Privy embedded wallet path
@@ -114,50 +147,84 @@ export function WalletControl() {
     [activePubkey, connection, external, privy.wallet]
   );
 
-  // Fetch balances & portfolio state
+  // Fetch balances & portfolio state with strict 8s timeout
   const refreshAccountState = useCallback(async () => {
     if (!activePubkey) {
       setSolBalance(null);
       setUsdcBalance(null);
       setHasPortfolio(null);
       setPortfolioData(null);
+      setSolError(null);
+      setUsdcError(null);
       return;
     }
 
-    try {
-      // 1. SOL Balance
-      const lamports = await connection.getBalance(activePubkey);
-      setSolBalance(lamports / LAMPORTS_PER_SOL);
+    // 1. SOL Balance with 8s timeout
+    setSolLoading(true);
+    setSolError(null);
+    withTimeout(connection.getBalance(activePubkey), 8000, "RPC timeout (8s)")
+      .then((lamports) => {
+        setSolBalance(lamports / LAMPORTS_PER_SOL);
+        setSolError(null);
+      })
+      .catch((err) => {
+        setSolError(err?.message || "Failed to load");
+      })
+      .finally(() => {
+        setSolLoading(false);
+      });
 
-      // 2. Test USDC Balance (SPL ATA)
+    // 2. Test USDC Balance with 8s timeout
+    if (!DEVNET_DEPLOYMENT.usdcMint) {
+      setUsdcBalance(null);
+      setUsdcError("mint not configured");
+    } else {
+      setUsdcLoading(true);
+      setUsdcError(null);
       const mintPubkey = new PublicKey(DEVNET_DEPLOYMENT.usdcMint);
       const userAta = getUserAta(activePubkey, mintPubkey);
-      try {
-        const tokenBalance = await connection.getTokenAccountBalance(userAta);
-        setUsdcBalance(tokenBalance.value.uiAmount ?? 0);
-      } catch {
-        setUsdcBalance(0);
-      }
 
-      // 3. Portfolio Account Check
-      const portfolioAddress = await deriveUserPortfolioAddress(activePubkey);
-      const accInfo = await connection.getAccountInfo(portfolioAddress);
-      if (accInfo && accInfo.data.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
-        setHasPortfolio(true);
-        const summary = decodePortfolioSummary(accInfo.data);
-        setPortfolioData(summary);
-      } else {
-        setHasPortfolio(false);
-        setPortfolioData(null);
-      }
-    } catch (err) {
-      console.warn("Error refreshing account state:", err);
+      withTimeout(connection.getTokenAccountBalance(userAta), 8000, "RPC timeout (8s)")
+        .then((tokenBalance) => {
+          setUsdcBalance(tokenBalance.value.uiAmount ?? 0);
+          setUsdcError(null);
+        })
+        .catch((err) => {
+          // If account doesn't exist, balance is 0. If real network error, mark error.
+          const msg = String(err?.message || "").toLowerCase();
+          if (msg.includes("could not find account") || msg.includes("account not found") || msg.includes("does not exist")) {
+            setUsdcBalance(0);
+            setUsdcError(null);
+          } else {
+            setUsdcError(err?.message || "Failed to load");
+          }
+        })
+        .finally(() => {
+          setUsdcLoading(false);
+        });
     }
+
+    // 3. Portfolio Account Check
+    deriveUserPortfolioAddress(activePubkey)
+      .then((portfolioAddress) => connection.getAccountInfo(portfolioAddress))
+      .then((accInfo) => {
+        if (accInfo && accInfo.data.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
+          setHasPortfolio(true);
+          const summary = decodePortfolioSummary(accInfo.data);
+          setPortfolioData(summary);
+        } else {
+          setHasPortfolio(false);
+          setPortfolioData(null);
+        }
+      })
+      .catch((e) => {
+        console.warn("Portfolio check error:", e);
+      });
   }, [activePubkey, connection]);
 
   useEffect(() => {
     refreshAccountState();
-    const interval = setInterval(refreshAccountState, 6000);
+    const interval = setInterval(refreshAccountState, 10000);
     return () => clearInterval(interval);
   }, [refreshAccountState]);
 
@@ -190,6 +257,11 @@ export function WalletControl() {
   // Action: Create Trading Account (InitPortfolio)
   async function handleCreatePortfolio() {
     if (!activePubkey) return;
+    if (!DEVNET_DEPLOYMENT.marketAccount) {
+      setError("Deploy market on devnet first (MOXIE_MARKET_ACCOUNT is missing).");
+      return;
+    }
+
     setIsCreatingPortfolio(true);
     setError(null);
     setActionSuccess(null);
@@ -199,7 +271,11 @@ export function WalletControl() {
       const marketAccount = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
       const portfolioPubkey = await deriveUserPortfolioAddress(activePubkey);
 
-      const rent = await connection.getMinimumBalanceForRentExemption(DEVNET_DEPLOYMENT.portfolioAccountLen);
+      const rent = await withTimeout(
+        connection.getMinimumBalanceForRentExemption(DEVNET_DEPLOYMENT.portfolioAccountLen),
+        8000,
+        "Devnet RPC timeout getting rent"
+      );
       const tx = new Transaction();
 
       // 1. Create account with seed
@@ -239,15 +315,15 @@ export function WalletControl() {
     }
   }
 
-  // Action: Faucet (Mock USDC + SOL)
-  async function handleFaucet() {
+  // Action: Faucet SOL (Server payer transfer with public airdrop fallback)
+  async function handleFaucetSol() {
     if (!activeAddress) return;
-    setFaucetLoading(true);
+    setIsAirdroppingSol(true);
     setError(null);
     setActionSuccess(null);
 
     try {
-      const res = await fetch("/api/faucet", {
+      const res = await fetch("/api/faucet/sol", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipient: activeAddress }),
@@ -255,35 +331,43 @@ export function WalletControl() {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Faucet request failed.");
+        throw new Error(data.error || "SOL faucet request failed.");
+      }
+
+      setActionSuccess(`Received ${data.amount || "SOL"}! (Tx: ${data.signature?.slice(0, 8)}...)`);
+      await refreshAccountState();
+    } catch (err: any) {
+      setError(err.message || "Failed to request SOL faucet.");
+    } finally {
+      setIsAirdroppingSol(false);
+    }
+  }
+
+  // Action: Faucet 500 Test USDC
+  async function handleFaucetUsdc() {
+    if (!activeAddress) return;
+    setFaucetUsdcLoading(true);
+    setError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch("/api/faucet/usdc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipient: activeAddress }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "USDC faucet request failed.");
       }
 
       setActionSuccess(`Received 500 Test USDC! (Tx: ${data.signature?.slice(0, 8)}...)`);
       await refreshAccountState();
     } catch (err: any) {
-      setError(err.message || "Failed to request faucet funds.");
+      setError(err.message || "Failed to request USDC faucet.");
     } finally {
-      setFaucetLoading(false);
-    }
-  }
-
-  // Action: Airdrop SOL from standard devnet faucet
-  async function handleAirdropSol() {
-    if (!activePubkey) return;
-    setIsAirdropping(true);
-    setError(null);
-    setActionSuccess(null);
-
-    try {
-      const sig = await connection.requestAirdrop(activePubkey, 1 * LAMPORTS_PER_SOL);
-      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-      await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-      setActionSuccess("Airdropped 1 SOL from Devnet faucet!");
-      await refreshAccountState();
-    } catch (err: any) {
-      setError(err.message || "Standard Devnet airdrop rate limited. Try the faucet button below.");
-    } finally {
-      setIsAirdropping(false);
+      setFaucetUsdcLoading(false);
     }
   }
 
@@ -359,10 +443,10 @@ export function WalletControl() {
           <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontWeight: 600 }}>{shortAddress(activeAddress)}</span>
             <span style={{ opacity: 0.75, fontSize: "11px" }}>
-              {solBalance !== null ? `${solBalance.toFixed(2)} SOL` : "…"}
+              {solBalance !== null ? `${solBalance.toFixed(2)} SOL` : solLoading ? "…" : "0 SOL"}
             </span>
             <span style={{ opacity: 0.75, fontSize: "11px" }}>
-              {usdcBalance !== null ? `$${usdcBalance.toFixed(0)} USDC` : "…"}
+              {usdcBalance !== null ? `$${usdcBalance.toFixed(0)} USDC` : usdcLoading ? "…" : "$0 USDC"}
             </span>
             <span
               style={{
@@ -442,38 +526,99 @@ export function WalletControl() {
 
                 {/* Balances Card */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  {/* SOL Balance */}
                   <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", padding: "10px 12px", borderRadius: "6px" }}>
-                    <small style={{ color: "rgba(255,255,255,0.5)", fontSize: "11px", display: "block" }}>Devnet SOL</small>
-                    <strong style={{ fontSize: "16px", color: "#fff" }}>
-                      {solBalance !== null ? `${solBalance.toFixed(3)} SOL` : "Loading..."}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <small style={{ color: "rgba(255,255,255,0.5)", fontSize: "11px" }}>Devnet SOL</small>
+                      <button
+                        type="button"
+                        onClick={refreshAccountState}
+                        title="Refresh Balances"
+                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", padding: 0, cursor: "pointer" }}
+                      >
+                        <RefreshCw size={11} className={solLoading ? "animate-spin" : ""} />
+                      </button>
+                    </div>
+
+                    <strong style={{ fontSize: "16px", color: "#fff", display: "block", marginTop: "2px" }}>
+                      {solBalance !== null
+                        ? `${solBalance.toFixed(3)} SOL`
+                        : solError
+                        ? <span style={{ fontSize: "12px", color: "#ff8474" }}>Error (timeout)</span>
+                        : "Loading..."}
                     </strong>
+
                     <button
                       type="button"
-                      onClick={handleAirdropSol}
-                      disabled={isAirdropping}
+                      onClick={handleFaucetSol}
+                      disabled={isAirdroppingSol}
                       style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "4px", fontSize: "10px", color: "#c7ff4a", background: "none", border: "none", padding: 0, cursor: "pointer" }}
                     >
-                      {isAirdropping ? <Loader2 size={10} className="animate-spin" /> : <Coins size={10} />}
-                      <span>Request 1 SOL Airdrop</span>
+                      {isAirdroppingSol ? <Loader2 size={10} className="animate-spin" /> : <Coins size={10} />}
+                      <span>{isAirdroppingSol ? "Transferring..." : "Get Devnet SOL"}</span>
                     </button>
                   </div>
 
+                  {/* USDC Balance */}
                   <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", padding: "10px 12px", borderRadius: "6px" }}>
-                    <small style={{ color: "rgba(255,255,255,0.5)", fontSize: "11px", display: "block" }}>Test USDC Balance</small>
-                    <strong style={{ fontSize: "16px", color: "#fff" }}>
-                      {usdcBalance !== null ? `$${usdcBalance.toFixed(2)}` : "Loading..."}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <small style={{ color: "rgba(255,255,255,0.5)", fontSize: "11px" }}>Test USDC Balance</small>
+                      <button
+                        type="button"
+                        onClick={refreshAccountState}
+                        title="Refresh Balances"
+                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", padding: 0, cursor: "pointer" }}
+                      >
+                        <RefreshCw size={11} className={usdcLoading ? "animate-spin" : ""} />
+                      </button>
+                    </div>
+
+                    <strong style={{ fontSize: "16px", color: "#fff", display: "block", marginTop: "2px" }}>
+                      {usdcBalance !== null
+                        ? `$${usdcBalance.toFixed(2)}`
+                        : usdcError === "mint not configured"
+                        ? <span style={{ fontSize: "11px", color: "#ffb400" }}>mint not configured</span>
+                        : usdcError
+                        ? <span style={{ fontSize: "12px", color: "#ff8474" }}>Error (timeout)</span>
+                        : "Loading..."}
                     </strong>
+
                     <button
                       type="button"
-                      onClick={handleFaucet}
-                      disabled={faucetLoading}
-                      style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "4px", fontSize: "10px", color: "#c7ff4a", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                      onClick={handleFaucetUsdc}
+                      disabled={faucetUsdcLoading || faucetConfigured === false}
+                      title={faucetConfigured === false ? "Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)" : "Mint 500 Test USDC"}
+                      style={{
+                        marginTop: "6px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        fontSize: "10px",
+                        color: faucetConfigured === false ? "rgba(255,255,255,0.4)" : "#c7ff4a",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        cursor: faucetConfigured === false ? "not-allowed" : "pointer",
+                      }}
                     >
-                      {faucetLoading ? <Loader2 size={10} className="animate-spin" /> : <PlusCircle size={10} />}
-                      <span>Get 500 Test USDC</span>
+                      {faucetUsdcLoading ? <Loader2 size={10} className="animate-spin" /> : <PlusCircle size={10} />}
+                      <span>
+                        {faucetUsdcLoading
+                          ? "Minting..."
+                          : faucetConfigured === false
+                          ? "Faucet unset (add secret)"
+                          : "Get 500 Test USDC"}
+                      </span>
                     </button>
                   </div>
                 </div>
+
+                {faucetConfigured === false && (
+                  <div style={{ background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.25)", borderRadius: "4px", padding: "6px 10px", fontSize: "11px", color: "#ffb400", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <AlertCircle size={13} />
+                    <span>Faucet keypair not configured (set <code>DEVNET_PAYER_SECRET</code> on Vercel).</span>
+                  </div>
+                )}
 
                 {/* Percolator Portfolio State */}
                 <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", padding: "12px", borderRadius: "6px" }}>
@@ -560,7 +705,7 @@ export function WalletControl() {
                       </button>
                       {(solBalance ?? 0) < 0.05 && (
                         <p style={{ fontSize: "11px", color: "#ffb400", marginTop: "6px" }}>
-                          Requires ~0.05 SOL for rent. Use &quot;Request 1 SOL Airdrop&quot; above first.
+                          Requires ~0.05 SOL for rent. Use &quot;Get Devnet SOL&quot; above first.
                         </p>
                       )}
                     </div>

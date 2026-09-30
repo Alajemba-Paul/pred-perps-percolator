@@ -1,7 +1,20 @@
 import { NextResponse } from "next/server";
 import { DEVNET_DEPLOYMENT } from "@/lib/contracts";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
+  const hasSecret = Boolean(process.env.DEVNET_PAYER_SECRET);
+
+  let indexerUrlHost: string | null = null;
+  if (process.env.MOXIE_API_URL) {
+    try {
+      indexerUrlHost = new URL(process.env.MOXIE_API_URL).host;
+    } catch {
+      indexerUrlHost = process.env.MOXIE_API_URL;
+    }
+  }
+
   return NextResponse.json({
     cluster: DEVNET_DEPLOYMENT.cluster,
     rpcUrl: DEVNET_DEPLOYMENT.rpcUrl,
@@ -16,6 +29,7 @@ export async function GET() {
     matcherContext: DEVNET_DEPLOYMENT.matcherContext,
     matcherDelegate: DEVNET_DEPLOYMENT.matcherDelegate,
     demoTraderPortfolio: DEVNET_DEPLOYMENT.demoTraderPortfolio,
-    indexerUrl: process.env.MOXIE_API_URL || null,
+    faucetConfigured: hasSecret,
+    indexerUrlHost,
   });
 }
