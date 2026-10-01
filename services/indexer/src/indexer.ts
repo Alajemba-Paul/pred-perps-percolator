@@ -11,6 +11,33 @@ export interface ChainSource {
   getSlot(): Promise<number>;
 }
 
+const KNOWN_MARKETS: Record<string, { title: string; rules: string }> = {
+  "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06": {
+    title: "Columbus: Mees Rottgering vs Edward Winter",
+    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  },
+  "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3": {
+    title: "Dota 2: BetBoom Team vs OG (BO3)",
+    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  },
+  "708a95e19c4438233b8b610bc0de672c46f6fb4cdfd8f25232f0aa7287fb11ac": {
+    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
+    rules: "Initial Devnet import record #1. State locked on-chain.",
+  },
+  "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ": {
+    title: "Columbus: Mees Rottgering vs Edward Winter",
+    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  },
+  "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C": {
+    title: "Dota 2: BetBoom Team vs OG (BO3)",
+    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  },
+  "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss": {
+    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
+    rules: "Initial Devnet import record #1. State locked on-chain.",
+  },
+};
+
 export class MoxieIndexer {
   readonly source: ChainSource;
   readonly store: ProjectionStore;
@@ -42,8 +69,15 @@ export class MoxieIndexer {
         }
       } catch (e) {}
 
-      if (!metaTitle) {
-        metaTitle = `Jupiter Live Market #${m.marketId}`;
+      // Resolve known human readable titles for indexed markets
+      const known = KNOWN_MARKETS[m.externalMarketHash] || KNOWN_MARKETS[a.address];
+      if (known) {
+        metaTitle = known.title;
+        if (!metaRules || /^[0-9a-fA-F]{64}$/.test(metaRules)) {
+          metaRules = known.rules;
+        }
+      } else if (!metaTitle || /^Jupiter Live Market/i.test(metaTitle) || /^[0-9a-fA-F]{64}$/.test(metaTitle)) {
+        metaTitle = `Market #${m.marketId} (…${a.address.slice(-6)})`;
       }
 
       this.store.upsertMarket({

@@ -49,7 +49,6 @@ export type Market = {
   };
 };
 
-
 export type ApiPortfolio = {
   address: string;
   owner: string;
@@ -134,8 +133,71 @@ export function formatProbability(prob: number): string {
   return `${pct.toFixed(1)}%`;
 }
 
+export const KNOWN_MARKET_TITLES: Record<string, { title: string; rules: string }> = {
+  "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06": {
+    title: "Columbus: Mees Rottgering vs Edward Winter",
+    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  },
+  "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3": {
+    title: "Dota 2: BetBoom Team vs OG (BO3)",
+    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  },
+  "708a95e19c4438233b8b610bc0de672c46f6fb4cdfd8f25232f0aa7287fb11ac": {
+    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
+    rules: "Initial Devnet import record #1. State locked on-chain.",
+  },
+  "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ": {
+    title: "Columbus: Mees Rottgering vs Edward Winter",
+    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  },
+  "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C": {
+    title: "Dota 2: BetBoom Team vs OG (BO3)",
+    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  },
+  "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss": {
+    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
+    rules: "Initial Devnet import record #1. State locked on-chain.",
+  },
+};
+
+export function resolveMarketTitleAndRules(x: {
+  title?: string;
+  rules?: string;
+  providerMarketId?: string;
+  address?: string;
+  marketId?: string | number;
+}): { title: string; rules: string } {
+  const byProvider = x.providerMarketId ? KNOWN_MARKET_TITLES[x.providerMarketId] : null;
+  const byAddress = x.address ? KNOWN_MARKET_TITLES[x.address] : null;
+  const known = byProvider || byAddress;
+
+  if (known) {
+    return {
+      title: known.title,
+      rules: known.rules,
+    };
+  }
+
+  let title = (x.title || "").trim();
+  let rules = (x.rules || "").trim();
+
+  const is64Hex = /^[0-9a-fA-F]{64}$/.test(title);
+  const isGeneric = /^Jupiter Live Market/i.test(title);
+
+  if (!title || is64Hex || isGeneric) {
+    const shortAddr = x.address ? `…${x.address.slice(-6)}` : "";
+    title = `Market #${x.marketId || 2} (${shortAddr})`;
+  }
+
+  if (!rules || /^[0-9a-fA-F]{64}$/.test(rules)) {
+    rules = "Percolator binary perpetual market on Solana Devnet.";
+  }
+
+  return { title, rules };
+}
+
 export function toMarket(x: ApiMarket): Market {
-  const title = x.title && x.title.trim().length > 0 ? x.title.trim() : `Imported prediction market #${x.marketId}`;
+  const { title, rules } = resolveMarketTitleAndRules(x);
   const yesMark = Number(x.markE6) / 1_000_000;
   const noMark = Math.max(0, 1 - yesMark);
 
@@ -163,7 +225,7 @@ export function toMarket(x: ApiMarket): Market {
     marketId: x.marketId,
     assetIndex: x.assetIndex,
     oracleUpdatedAt: x.oracleUpdatedAt,
-    rules: x.rules,
+    rules,
     providerMarketId: x.providerMarketId,
     book: {
       yesBid: Math.max(0.01, yesMark - 0.01),

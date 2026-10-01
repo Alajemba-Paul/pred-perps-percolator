@@ -13,6 +13,9 @@ import fs from "fs";
 
 export const dynamic = "force-dynamic";
 
+// In-memory rate limiting: 1 request per 20 seconds per pubkey
+const rateLimitMap = new Map<string, number>();
+
 function getPayerKeypair(): Keypair | null {
   if (process.env.DEVNET_PAYER_SECRET) {
     try {
@@ -49,68 +52,70 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing recipient address" }, { status: 400 });
     }
 
-    const recipientPubkey = new PublicKey(recipient);
+    let recipientPubkey: PublicKey;
+    try {
+      recipientPubkey = new PublicKey(recipient);
+    } catch {
+      return NextResponse.json({ error: "Invalid recipient address" }, { status: 400 });
+    }
+
+    const payer = getPayerKeypair();
+    if (!payer) {
+      return NextResponse.json(
+        {
+          error: "Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)",
+        },
+        { status: 503 }
+      );
+    }
+
+    // Rate limit check
+    const pubkeyStr = recipientPubkey.toBase58();
+    const lastRequest = rateLimitMap.get(pubkeyStr) || 0;
+    const now = Date.now();
+    if (now - lastRequest < 20_000) {
+      const waitSec = Math.ceil((20_000 - (now - lastRequest)) / 1000);
+      return NextResponse.json(
+        { error: `Rate limited. Please wait ${waitSec}s before requesting Devnet SOL again.` },
+        { status: 429 }
+      );
+    }
+
     const rpcUrl =
       process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+      process.env.SOLANA_RPC_URL ||
       DEVNET_DEPLOYMENT.rpcUrl ||
       "https://api.devnet.solana.com";
     const connection = new Connection(rpcUrl, "confirmed");
 
-    const payer = getPayerKeypair();
-
-    // 1. Try server payer direct transfer (0.1 SOL)
-    if (payer) {
-      try {
-        const tx = new Transaction().add(
-          SystemProgram.transfer({
-            fromPubkey: payer.publicKey,
-            toPubkey: recipientPubkey,
-            lamports: BigInt(Math.floor(0.1 * LAMPORTS_PER_SOL)),
-          })
-        );
-        const sig = await sendAndConfirmTransaction(connection, tx, [payer]);
-        return NextResponse.json({
-          success: true,
-          method: "payer_transfer",
-          signature: sig,
-          amount: "0.1 SOL",
-          recipient: recipientPubkey.toBase58(),
-        });
-      } catch (err: any) {
-        console.warn("Server payer transfer failed, attempting public airdrop fallback:", err);
-      }
-    }
-
-    // 2. Fallback to public Devnet airdrop
-    try {
-      const airdropSig = await connection.requestAirdrop(
-        recipientPubkey,
-        Math.floor(0.5 * LAMPORTS_PER_SOL)
-      );
-      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-      await connection.confirmTransaction(
-        { signature: airdropSig, ...latestBlockhash },
-        "confirmed"
-      );
-      return NextResponse.json({
-        success: true,
-        method: "public_airdrop",
-        signature: airdropSig,
-        amount: "0.5 SOL",
-        recipient: recipientPubkey.toBase58(),
-      });
-    } catch (airdropErr: any) {
-      console.error("Public airdrop also failed:", airdropErr);
-    }
-
-    return NextResponse.json(
-      {
-        error: "Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)",
-      },
-      { status: 503 }
+    // Transfer 0.1 SOL directly from server payer
+    const amountLamports = BigInt(Math.floor(0.1 * LAMPORTS_PER_SOL));
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: recipientPubkey,
+        lamports: amountLamports,
+      })
     );
+
+    const sig = await sendAndConfirmTransaction(connection, tx, [payer], {
+      commitment: "confirmed",
+    });
+
+    rateLimitMap.set(pubkeyStr, now);
+
+    return NextResponse.json({
+      success: true,
+      signature: sig,
+      amount: "0.1 SOL",
+      recipient: pubkeyStr,
+      explorerUrl: `https://explorer.solana.com/tx/${sig}?cluster=devnet`,
+    });
   } catch (err: any) {
     console.error("SOL Faucet error:", err);
-    return NextResponse.json({ error: err.message || "SOL faucet error" }, { status: 500 });
+    return NextResponse.json(
+      { error: err.message || "Failed to transfer Devnet SOL" },
+      { status: 500 }
+    );
   }
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletReadyState } from "@solana/wallet-adapter-base";
 import {
   PublicKey,
   Transaction,
@@ -12,9 +11,7 @@ import {
 } from "@solana/web3.js";
 import {
   Check,
-  ChevronRight,
   LogOut,
-  Mail,
   Wallet,
   X,
   Coins,
@@ -26,6 +23,7 @@ import {
   ArrowDownLeft,
   Copy,
   RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import { usePrivyWalletState } from "./wallet-providers";
 import {
@@ -40,7 +38,7 @@ function shortAddress(address: string) {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs = 8000, errorMsg = "Request timed out"): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 8000, errorMsg = "RPC timeout (8s)"): Promise<T> {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs)),
@@ -51,8 +49,11 @@ export function WalletControl() {
   const [open, setOpen] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<{ message: string; signature?: string; explorerUrl?: string } | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Direct window.solana (Phantom) fallback state
+  const [directPhantomAddress, setDirectPhantomAddress] = useState<string | null>(null);
 
   // Deployment configuration state
   const [faucetConfigured, setFaucetConfigured] = useState<boolean | null>(null);
@@ -67,6 +68,7 @@ export function WalletControl() {
   const [usdcError, setUsdcError] = useState<string | null>(null);
 
   const [hasPortfolio, setHasPortfolio] = useState<boolean | null>(null);
+  const [portfolioPubkeyStr, setPortfolioPubkeyStr] = useState<string | null>(null);
   const [portfolioData, setPortfolioData] = useState<any | null>(null);
   const [isCreatingPortfolio, setIsCreatingPortfolio] = useState(false);
   const [isDepositing, setIsDepositing] = useState(false);
@@ -78,12 +80,17 @@ export function WalletControl() {
   const external = useWallet();
   const { connection } = useConnection();
 
-  const externalWallets = useMemo(
-    () => external.wallets.filter(({ adapter }) => !adapter.name.toLowerCase().includes("privy")),
-    [external.wallets]
-  );
+  // Restore direct phantom session from localStorage if present
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("moxie_direct_phantom");
+      if (saved) {
+        setDirectPhantomAddress(saved);
+      }
+    }
+  }, []);
 
-  const activeAddress = privy.address || external.publicKey?.toBase58() || null;
+  const activeAddress = privy.address || external.publicKey?.toBase58() || directPhantomAddress || null;
   const activePubkey = useMemo(() => (activeAddress ? new PublicKey(activeAddress) : null), [activeAddress]);
 
   // Load deployment public state
@@ -98,7 +105,7 @@ export function WalletControl() {
       .catch(() => {});
   }, []);
 
-  // Unified signer supporting both Privy embedded wallets and standard external adapters
+  // Unified signer supporting Privy, standard Solana adapters, and direct window.solana
   const signAndSendTransaction = useCallback(
     async (tx: Transaction): Promise<string> => {
       if (!activePubkey) throw new Error("Wallet not connected");
@@ -107,11 +114,19 @@ export function WalletControl() {
       const latestBlockhash = await withTimeout(
         connection.getLatestBlockhash("confirmed"),
         8000,
-        "Failed to fetch recent blockhash from Devnet RPC"
+        "Devnet RPC timeout fetching blockhash"
       );
       tx.recentBlockhash = latestBlockhash.blockhash;
 
-      // 1. Privy embedded wallet path
+      // 1. Direct window.solana fallback
+      if (directPhantomAddress && typeof window !== "undefined" && (window as any).solana?.signAndSendTransaction) {
+        const res = await (window as any).solana.signAndSendTransaction(tx);
+        const sig = res.signature || res;
+        await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
+        return sig;
+      }
+
+      // 2. Privy embedded wallet path
       if (privy.wallet) {
         if (typeof privy.wallet.signTransaction === "function") {
           const signedTx = await privy.wallet.signTransaction(tx);
@@ -127,7 +142,7 @@ export function WalletControl() {
         }
       }
 
-      // 2. Standard Solana Wallet Adapter path
+      // 3. Standard Solana Wallet Adapter path
       if (external.sendTransaction) {
         const sig = await external.sendTransaction(tx, connection);
         await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
@@ -142,72 +157,107 @@ export function WalletControl() {
         return sig;
       }
 
-      throw new Error("No signing method available on connected wallet. Please use Privy or Phantom/Solflare.");
+      throw new Error("No signing method available on connected wallet. Please use Privy or Phantom.");
     },
-    [activePubkey, connection, external, privy.wallet]
+    [activePubkey, connection, directPhantomAddress, external, privy.wallet]
   );
 
-  // Fetch balances & portfolio state with strict 8s timeout
+  // Fetch balances & portfolio state using server endpoint first with client fallback
   const refreshAccountState = useCallback(async () => {
     if (!activePubkey) {
       setSolBalance(null);
       setUsdcBalance(null);
       setHasPortfolio(null);
       setPortfolioData(null);
+      setPortfolioPubkeyStr(null);
       setSolError(null);
       setUsdcError(null);
       return;
     }
 
-    // 1. SOL Balance with 8s timeout
     setSolLoading(true);
+    setUsdcLoading(true);
     setSolError(null);
-    withTimeout(connection.getBalance(activePubkey), 8000, "RPC timeout (8s)")
+    setUsdcError(null);
+
+    // 1. Fast parallel server-side fetch (/api/account-state)
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`/api/account-state?address=${activePubkey.toBase58()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (res.ok) {
+        const data = await res.json();
+        setSolBalance(data.sol !== null && data.sol !== undefined ? data.sol : null);
+        setSolError(data.solError || null);
+
+        setUsdcBalance(data.usdc !== null && data.usdc !== undefined ? data.usdc : null);
+        setUsdcError(data.usdcError || null);
+
+        setHasPortfolio(Boolean(data.hasPortfolio));
+        setPortfolioPubkeyStr(data.portfolioPubkey || null);
+        setPortfolioData(data.portfolioData || null);
+
+        setSolLoading(false);
+        setUsdcLoading(false);
+        return;
+      }
+    } catch {
+      // Server route timed out or failed, fall back to direct client RPC
+    }
+
+    // 2. Direct client RPC fallback with 8s timeout
+    const fetchSol = withTimeout(connection.getBalance(activePubkey), 8000, "RPC timeout")
       .then((lamports) => {
         setSolBalance(lamports / LAMPORTS_PER_SOL);
         setSolError(null);
       })
       .catch((err) => {
-        setSolError(err?.message || "Failed to load");
+        const msg = String(err?.message || "");
+        if (msg.includes("429")) setSolError("RPC 429 Rate limited");
+        else if (msg.includes("401")) setSolError("RPC 401 Unauthorized");
+        else setSolError("RPC timeout");
       })
-      .finally(() => {
-        setSolLoading(false);
-      });
+      .finally(() => setSolLoading(false));
 
-    // 2. Test USDC Balance with 8s timeout
+    let fetchUsdc: Promise<void>;
     if (!DEVNET_DEPLOYMENT.usdcMint) {
       setUsdcBalance(null);
-      setUsdcError("mint not configured");
+      setUsdcError("USDC mint not configured");
+      setUsdcLoading(false);
+      fetchUsdc = Promise.resolve();
     } else {
-      setUsdcLoading(true);
-      setUsdcError(null);
       const mintPubkey = new PublicKey(DEVNET_DEPLOYMENT.usdcMint);
       const userAta = getUserAta(activePubkey, mintPubkey);
-
-      withTimeout(connection.getTokenAccountBalance(userAta), 8000, "RPC timeout (8s)")
+      fetchUsdc = withTimeout(connection.getTokenAccountBalance(userAta), 8000, "RPC timeout")
         .then((tokenBalance) => {
           setUsdcBalance(tokenBalance.value.uiAmount ?? 0);
           setUsdcError(null);
         })
         .catch((err) => {
-          // If account doesn't exist, balance is 0. If real network error, mark error.
           const msg = String(err?.message || "").toLowerCase();
           if (msg.includes("could not find account") || msg.includes("account not found") || msg.includes("does not exist")) {
             setUsdcBalance(0);
             setUsdcError(null);
+          } else if (msg.includes("429")) {
+            setUsdcError("RPC 429 Rate limited");
+          } else if (msg.includes("401")) {
+            setUsdcError("RPC 401 Unauthorized");
           } else {
-            setUsdcError(err?.message || "Failed to load");
+            setUsdcError("RPC timeout");
           }
         })
-        .finally(() => {
-          setUsdcLoading(false);
-        });
+        .finally(() => setUsdcLoading(false));
     }
 
-    // 3. Portfolio Account Check
-    deriveUserPortfolioAddress(activePubkey)
-      .then((portfolioAddress) => connection.getAccountInfo(portfolioAddress))
-      .then((accInfo) => {
+    const fetchPortfolio = deriveUserPortfolioAddress(activePubkey)
+      .then(async (portfolioAddress) => {
+        setPortfolioPubkeyStr(portfolioAddress.toBase58());
+        const accInfo = await withTimeout(connection.getAccountInfo(portfolioAddress), 8000, "RPC timeout");
         if (accInfo && accInfo.data.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
           setHasPortfolio(true);
           const summary = decodePortfolioSummary(accInfo.data);
@@ -218,8 +268,10 @@ export function WalletControl() {
         }
       })
       .catch((e) => {
-        console.warn("Portfolio check error:", e);
+        console.warn("Portfolio check:", e);
       });
+
+    await Promise.allSettled([fetchSol, fetchUsdc, fetchPortfolio]);
   }, [activePubkey, connection]);
 
   useEffect(() => {
@@ -228,16 +280,34 @@ export function WalletControl() {
     return () => clearInterval(interval);
   }, [refreshAccountState]);
 
-  // Connect helper
-  async function connectExternal(walletName: string) {
-    setConnecting(walletName);
+  // Connect helper: Direct Phantom fallback
+  async function connectDirectPhantom() {
+    setConnecting("Phantom");
     setError(null);
     try {
-      external.select(walletName as any);
-      await external.connect();
+      if (typeof window === "undefined" || !(window as any).solana) {
+        throw new Error("Phantom extension not detected in this browser. Please install Phantom or use Privy.");
+      }
+      const resp = await (window as any).solana.connect();
+      const pubkey = resp.publicKey.toBase58();
+      setDirectPhantomAddress(pubkey);
+      localStorage.setItem("moxie_direct_phantom", pubkey);
       setOpen(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to connect wallet.");
+      setError(cause instanceof Error ? cause.message : "Failed to connect to Phantom.");
+    } finally {
+      setConnecting(null);
+    }
+  }
+
+  // Connect helper: Privy
+  function connectPrivy() {
+    setConnecting("Privy");
+    setError(null);
+    try {
+      privy.login();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not open Privy modal. Please try Phantom directly.");
     } finally {
       setConnecting(null);
     }
@@ -248,6 +318,10 @@ export function WalletControl() {
     try {
       if (external.connected) await external.disconnect();
       if (privy.authenticated) await privy.logout();
+      setDirectPhantomAddress(null);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("moxie_direct_phantom");
+      }
       setOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not disconnect wallet.");
@@ -258,7 +332,12 @@ export function WalletControl() {
   async function handleCreatePortfolio() {
     if (!activePubkey) return;
     if (!DEVNET_DEPLOYMENT.marketAccount) {
-      setError("Deploy market on devnet first (MOXIE_MARKET_ACCOUNT is missing).");
+      setError("Market account not configured (set MOXIE_MARKET_ACCOUNT on Vercel).");
+      return;
+    }
+
+    if (solBalance === null || solBalance < 0.05) {
+      setError("Insufficient SOL for rent exemption (~0.08 SOL required). Please click 'Get Devnet SOL' first.");
       return;
     }
 
@@ -274,7 +353,7 @@ export function WalletControl() {
       const rent = await withTimeout(
         connection.getMinimumBalanceForRentExemption(DEVNET_DEPLOYMENT.portfolioAccountLen),
         8000,
-        "Devnet RPC timeout getting rent"
+        "Devnet RPC timeout getting rent exemption"
       );
       const tx = new Transaction();
 
@@ -291,7 +370,7 @@ export function WalletControl() {
         })
       );
 
-      // 2. InitPortfolio instruction
+      // 2. InitPortfolio instruction (tag 1)
       tx.add(
         new TransactionInstruction({
           programId: percolatorProgramId,
@@ -300,12 +379,22 @@ export function WalletControl() {
             { pubkey: marketAccount, isSigner: false, isWritable: true },
             { pubkey: portfolioPubkey, isSigner: false, isWritable: true },
           ],
-          data: Buffer.from([1]), // tag 1: InitPortfolio
+          data: Buffer.from([1]),
         })
       );
 
       const sig = await signAndSendTransaction(tx);
-      setActionSuccess(`Trading account created! Signature: ${sig.slice(0, 8)}...`);
+      const explorerUrl = `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`moxie_portfolio_${activeAddress}`, portfolioPubkey.toBase58());
+      }
+      setHasPortfolio(true);
+      setPortfolioPubkeyStr(portfolioPubkey.toBase58());
+      setActionSuccess({
+        message: `Trading account initialized! Portfolio: ${shortAddress(portfolioPubkey.toBase58())}`,
+        signature: sig,
+        explorerUrl,
+      });
       await refreshAccountState();
     } catch (err: any) {
       console.error("InitPortfolio error:", err);
@@ -315,9 +404,14 @@ export function WalletControl() {
     }
   }
 
-  // Action: Faucet SOL (Server payer transfer with public airdrop fallback)
+  // Action: Faucet SOL
   async function handleFaucetSol() {
     if (!activeAddress) return;
+    if (faucetConfigured === false) {
+      setError("Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)");
+      return;
+    }
+
     setIsAirdroppingSol(true);
     setError(null);
     setActionSuccess(null);
@@ -334,10 +428,14 @@ export function WalletControl() {
         throw new Error(data.error || "SOL faucet request failed.");
       }
 
-      setActionSuccess(`Received ${data.amount || "SOL"}! (Tx: ${data.signature?.slice(0, 8)}...)`);
+      setActionSuccess({
+        message: `Transferred ${data.amount || "0.1 SOL"}!`,
+        signature: data.signature,
+        explorerUrl: data.explorerUrl,
+      });
       await refreshAccountState();
     } catch (err: any) {
-      setError(err.message || "Failed to request SOL faucet.");
+      setError(err.message || "Failed to request Devnet SOL.");
     } finally {
       setIsAirdroppingSol(false);
     }
@@ -346,6 +444,11 @@ export function WalletControl() {
   // Action: Faucet 500 Test USDC
   async function handleFaucetUsdc() {
     if (!activeAddress) return;
+    if (faucetConfigured === false) {
+      setError("Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)");
+      return;
+    }
+
     setFaucetUsdcLoading(true);
     setError(null);
     setActionSuccess(null);
@@ -362,10 +465,14 @@ export function WalletControl() {
         throw new Error(data.error || "USDC faucet request failed.");
       }
 
-      setActionSuccess(`Received 500 Test USDC! (Tx: ${data.signature?.slice(0, 8)}...)`);
+      setActionSuccess({
+        message: `Minted 500 Test USDC!`,
+        signature: data.signature,
+        explorerUrl: data.explorerUrl,
+      });
       await refreshAccountState();
     } catch (err: any) {
-      setError(err.message || "Failed to request USDC faucet.");
+      setError(err.message || "Failed to request Test USDC.");
     } finally {
       setFaucetUsdcLoading(false);
     }
@@ -408,7 +515,11 @@ export function WalletControl() {
       );
 
       const sig = await signAndSendTransaction(tx);
-      setActionSuccess(`Deposited $100 Margin! Signature: ${sig.slice(0, 8)}...`);
+      setActionSuccess({
+        message: `Deposited $100 Margin!`,
+        signature: sig,
+        explorerUrl: `https://explorer.solana.com/tx/${sig}?cluster=devnet`,
+      });
       await refreshAccountState();
     } catch (err: any) {
       console.error("Deposit error:", err);
@@ -425,6 +536,10 @@ export function WalletControl() {
       setTimeout(() => setCopied(false), 2000);
     }
   }
+
+  const faucetDisabledTitle = faucetConfigured === false
+    ? "Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)"
+    : undefined;
 
   return (
     <>
@@ -533,28 +648,53 @@ export function WalletControl() {
                       <button
                         type="button"
                         onClick={refreshAccountState}
-                        title="Refresh Balances"
+                        title="Retry RPC Balances"
                         style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", padding: 0, cursor: "pointer" }}
                       >
                         <RefreshCw size={11} className={solLoading ? "animate-spin" : ""} />
                       </button>
                     </div>
 
-                    <strong style={{ fontSize: "16px", color: "#fff", display: "block", marginTop: "2px" }}>
-                      {solBalance !== null
-                        ? `${solBalance.toFixed(3)} SOL`
-                        : solError
-                        ? <span style={{ fontSize: "12px", color: "#ff8474" }}>Error (timeout)</span>
-                        : "Loading..."}
-                    </strong>
+                    <div style={{ marginTop: "4px", minHeight: "24px" }}>
+                      {solBalance !== null ? (
+                        <strong style={{ fontSize: "16px", color: "#fff" }}>
+                          {solBalance.toFixed(3)} SOL
+                        </strong>
+                      ) : solError ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <span style={{ fontSize: "12px", color: "#ff8474" }}>{solError}</span>
+                          <button
+                            type="button"
+                            onClick={refreshAccountState}
+                            style={{ fontSize: "10px", color: "#c7ff4a", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>Loading...</span>
+                      )}
+                    </div>
 
                     <button
                       type="button"
                       onClick={handleFaucetSol}
-                      disabled={isAirdroppingSol}
-                      style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "4px", fontSize: "10px", color: "#c7ff4a", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                      disabled={isAirdroppingSol || faucetConfigured === false}
+                      title={faucetDisabledTitle}
+                      style={{
+                        marginTop: "8px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        fontSize: "11px",
+                        color: faucetConfigured === false ? "rgba(255,255,255,0.3)" : "#c7ff4a",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        cursor: faucetConfigured === false ? "not-allowed" : "pointer",
+                      }}
                     >
-                      {isAirdroppingSol ? <Loader2 size={10} className="animate-spin" /> : <Coins size={10} />}
+                      {isAirdroppingSol ? <Loader2 size={11} className="animate-spin" /> : <Coins size={11} />}
                       <span>{isAirdroppingSol ? "Transferring..." : "Get Devnet SOL"}</span>
                     </button>
                   </div>
@@ -566,64 +706,75 @@ export function WalletControl() {
                       <button
                         type="button"
                         onClick={refreshAccountState}
-                        title="Refresh Balances"
+                        title="Retry RPC Balances"
                         style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", padding: 0, cursor: "pointer" }}
                       >
                         <RefreshCw size={11} className={usdcLoading ? "animate-spin" : ""} />
                       </button>
                     </div>
 
-                    <strong style={{ fontSize: "16px", color: "#fff", display: "block", marginTop: "2px" }}>
-                      {usdcBalance !== null
-                        ? `$${usdcBalance.toFixed(2)}`
-                        : usdcError === "mint not configured"
-                        ? <span style={{ fontSize: "11px", color: "#ffb400" }}>mint not configured</span>
-                        : usdcError
-                        ? <span style={{ fontSize: "12px", color: "#ff8474" }}>Error (timeout)</span>
-                        : "Loading..."}
-                    </strong>
+                    <div style={{ marginTop: "4px", minHeight: "24px" }}>
+                      {usdcBalance !== null ? (
+                        <strong style={{ fontSize: "16px", color: "#fff" }}>
+                          ${usdcBalance.toFixed(2)}
+                        </strong>
+                      ) : usdcError ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <span style={{ fontSize: "11px", color: usdcError === "USDC mint not configured" ? "#ffb400" : "#ff8474" }}>
+                            {usdcError}
+                          </span>
+                          {usdcError !== "USDC mint not configured" && (
+                            <button
+                              type="button"
+                              onClick={refreshAccountState}
+                              style={{ fontSize: "10px", color: "#c7ff4a", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
+                            >
+                              Retry
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>Loading...</span>
+                      )}
+                    </div>
 
                     <button
                       type="button"
                       onClick={handleFaucetUsdc}
                       disabled={faucetUsdcLoading || faucetConfigured === false}
-                      title={faucetConfigured === false ? "Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)" : "Mint 500 Test USDC"}
+                      title={faucetDisabledTitle}
                       style={{
-                        marginTop: "6px",
+                        marginTop: "8px",
                         display: "flex",
                         alignItems: "center",
                         gap: "4px",
-                        fontSize: "10px",
-                        color: faucetConfigured === false ? "rgba(255,255,255,0.4)" : "#c7ff4a",
+                        fontSize: "11px",
+                        color: faucetConfigured === false ? "rgba(255,255,255,0.3)" : "#c7ff4a",
                         background: "none",
                         border: "none",
                         padding: 0,
                         cursor: faucetConfigured === false ? "not-allowed" : "pointer",
                       }}
                     >
-                      {faucetUsdcLoading ? <Loader2 size={10} className="animate-spin" /> : <PlusCircle size={10} />}
-                      <span>
-                        {faucetUsdcLoading
-                          ? "Minting..."
-                          : faucetConfigured === false
-                          ? "Faucet unset (add secret)"
-                          : "Get 500 Test USDC"}
-                      </span>
+                      {faucetUsdcLoading ? <Loader2 size={11} className="animate-spin" /> : <Coins size={11} />}
+                      <span>{faucetUsdcLoading ? "Minting..." : "Get 500 Test USDC"}</span>
                     </button>
                   </div>
                 </div>
 
                 {faucetConfigured === false && (
-                  <div style={{ background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.25)", borderRadius: "4px", padding: "6px 10px", fontSize: "11px", color: "#ffb400", display: "flex", alignItems: "center", gap: "6px" }}>
-                    <AlertCircle size={13} />
-                    <span>Faucet keypair not configured (set <code>DEVNET_PAYER_SECRET</code> on Vercel).</span>
+                  <div style={{ fontSize: "11px", color: "#ffb400", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.2)", borderRadius: "4px", padding: "6px 10px" }}>
+                    Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)
                   </div>
                 )}
 
-                {/* Percolator Portfolio State */}
-                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", padding: "12px", borderRadius: "6px" }}>
+                {/* Portfolio Status Section */}
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", padding: "12px 14px", borderRadius: "6px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <span style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>Percolator Portfolio</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <ShieldCheck size={14} color={hasPortfolio ? "#c7ff4a" : "#ffb400"} />
+                      <span style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>Percolator Portfolio</span>
+                    </div>
                     <span
                       style={{
                         fontSize: "10px",
@@ -639,61 +790,70 @@ export function WalletControl() {
                   </div>
 
                   {hasPortfolio ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                        <span style={{ color: "rgba(255,255,255,0.6)" }}>Trading Collateral:</span>
-                        <strong style={{ color: "#fff" }}>
-                          ${portfolioData ? (Number(portfolioData.capital) / 1e6).toFixed(2) : "0.00"}
-                        </strong>
+                    <div>
+                      <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)", margin: "0 0 10px", lineHeight: 1.4 }}>
+                        Your on-chain trading account is active. Deposited margin backs your 1× isolated perp positions.
+                      </p>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", background: "rgba(0,0,0,0.3)", padding: "8px 10px", borderRadius: "4px", marginBottom: "10px" }}>
+                        <div>
+                          <small style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)" }}>Account Capital</small>
+                          <strong style={{ fontSize: "13px", color: "#c7ff4a", display: "block" }}>
+                            ${portfolioData ? (Number(portfolioData.capital) / 1e6).toFixed(2) : "0.00"}
+                          </strong>
+                        </div>
+                        <div>
+                          <small style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)" }}>Account Equity</small>
+                          <strong style={{ fontSize: "13px", color: "#fff", display: "block" }}>
+                            ${portfolioData ? (Number(portfolioData.equity) / 1e6).toFixed(2) : "0.00"}
+                          </strong>
+                        </div>
                       </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                        <span style={{ color: "rgba(255,255,255,0.6)" }}>Margin Health:</span>
-                        <span style={{ color: "#c7ff4a" }}>Healthy (100% Solvency)</span>
-                      </div>
+
                       <button
                         type="button"
                         onClick={handleDepositMargin}
                         disabled={isDepositing || (usdcBalance ?? 0) < 100}
                         style={{
-                          marginTop: "6px",
                           width: "100%",
                           padding: "8px 12px",
+                          background: "rgba(199,255,74,0.15)",
+                          border: "1px solid rgba(199,255,74,0.3)",
+                          color: "#c7ff4a",
+                          borderRadius: "4px",
                           fontSize: "12px",
                           fontWeight: 600,
-                          background: "#c7ff4a",
-                          color: "#000",
-                          border: "none",
-                          borderRadius: "4px",
-                          cursor: (usdcBalance ?? 0) >= 100 ? "pointer" : "not-allowed",
+                          cursor: (usdcBalance ?? 0) < 100 ? "not-allowed" : "pointer",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
                           gap: "6px",
                         }}
                       >
-                        {isDepositing ? <Loader2 size={13} className="animate-spin" /> : <ArrowDownLeft size={13} />}
+                        {isDepositing ? <Loader2 size={12} className="animate-spin" /> : <ArrowDownLeft size={12} />}
                         <span>Deposit $100 Margin</span>
                       </button>
                     </div>
                   ) : (
                     <div>
-                      <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.7)", margin: "4px 0 10px", lineHeight: 1.4 }}>
-                        Create a program-owned portfolio on Percolator to trade prediction perps with on-chain solvency proofs.
+                      <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)", margin: "0 0 10px", lineHeight: 1.4 }}>
+                        Create a Percolator portfolio PDA on Solana Devnet to open perp positions. Requires ~0.08 SOL rent exemption.
                       </p>
+
                       <button
                         type="button"
                         onClick={handleCreatePortfolio}
-                        disabled={isCreatingPortfolio || (solBalance ?? 0) < 0.05}
+                        disabled={isCreatingPortfolio}
                         style={{
                           width: "100%",
-                          padding: "8px 12px",
-                          fontSize: "12px",
-                          fontWeight: 600,
+                          padding: "10px 14px",
                           background: "#c7ff4a",
-                          color: "#000",
                           border: "none",
+                          color: "#000",
                           borderRadius: "4px",
-                          cursor: (solBalance ?? 0) >= 0.05 ? "pointer" : "not-allowed",
+                          fontSize: "13px",
+                          fontWeight: 700,
+                          cursor: "pointer",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -701,95 +861,132 @@ export function WalletControl() {
                         }}
                       >
                         {isCreatingPortfolio ? <Loader2 size={13} className="animate-spin" /> : <PlusCircle size={13} />}
-                        <span>Create Trading Account (InitPortfolio)</span>
+                        <span>{isCreatingPortfolio ? "Signing Transaction..." : "InitPortfolio (1 Click)"}</span>
                       </button>
-                      {(solBalance ?? 0) < 0.05 && (
-                        <p style={{ fontSize: "11px", color: "#ffb400", marginTop: "6px" }}>
-                          Requires ~0.05 SOL for rent. Use &quot;Get Devnet SOL&quot; above first.
-                        </p>
-                      )}
                     </div>
                   )}
                 </div>
 
+                {/* Feedback Messages */}
                 {actionSuccess && (
-                  <p style={{ fontSize: "11px", color: "#c7ff4a", background: "rgba(199,255,74,0.1)", padding: "8px 12px", borderRadius: "4px", margin: 0 }}>
-                    {actionSuccess}
-                  </p>
+                  <div style={{ background: "rgba(199,255,74,0.1)", border: "1px solid rgba(199,255,74,0.3)", borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: "#c7ff4a" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                      <Check size={14} />
+                      <strong style={{ color: "#fff" }}>{actionSuccess.message}</strong>
+                    </div>
+                    {actionSuccess.explorerUrl && (
+                      <a
+                        href={actionSuccess.explorerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "#c7ff4a", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", marginTop: "2px" }}
+                      >
+                        <span>View Transaction on Solana Explorer</span>
+                        <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
                 )}
 
                 {error && (
-                  <p className="wallet-error" role="alert" style={{ fontSize: "11px", margin: 0 }}>
-                    {error}
-                  </p>
+                  <div style={{ background: "rgba(255,77,77,0.1)", border: "1px solid rgba(255,77,77,0.3)", borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: "#ff8474", display: "flex", alignItems: "flex-start", gap: "6px" }}>
+                    <AlertTriangle size={14} style={{ marginTop: "2px", flexShrink: 0 }} />
+                    <div>
+                      <span>{error}</span>
+                    </div>
+                  </div>
                 )}
 
-                <button className="wallet-disconnect" type="button" onClick={disconnectActive} style={{ marginTop: "4px" }}>
-                  <LogOut size={14} aria-hidden="true" /> Disconnect Wallet
+                {/* Disconnect Button */}
+                <button
+                  type="button"
+                  onClick={disconnectActive}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    background: "none",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    color: "rgba(255,255,255,0.7)",
+                    borderRadius: "4px",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "6px",
+                  }}
+                >
+                  <LogOut size={13} />
+                  <span>Disconnect Wallet</span>
                 </button>
               </div>
             ) : (
-              <div className="wallet-modal-body">
-                <button className="wallet-method primary" type="button" onClick={privy.login}>
-                  <span className="wallet-method-icon">
-                    <Mail size={18} aria-hidden="true" />
-                  </span>
-                  <span>
-                    <strong>Email or Google (Privy)</strong>
-                    <small>Embedded Solana wallet with one-click social login</small>
-                  </span>
-                  <ChevronRight size={16} aria-hidden="true" />
+              /* Connect Options */
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {error && (
+                  <div style={{ background: "rgba(255,77,77,0.1)", border: "1px solid rgba(255,77,77,0.3)", borderRadius: "6px", padding: "10px", fontSize: "12px", color: "#ff8474", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <AlertTriangle size={14} />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                {/* Option 1: Direct Phantom Fallback */}
+                <button
+                  type="button"
+                  onClick={connectDirectPhantom}
+                  disabled={connecting !== null}
+                  style={{
+                    padding: "14px 16px",
+                    background: "#c7ff4a",
+                    border: "none",
+                    borderRadius: "6px",
+                    color: "#000",
+                    fontWeight: 700,
+                    fontSize: "14px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <Wallet size={18} />
+                    <span>Connect Phantom (Devnet)</span>
+                  </div>
+                  {connecting === "Phantom" ? <Loader2 size={16} className="animate-spin" /> : <span>→</span>}
                 </button>
 
-                <div className="wallet-divider">
-                  <span>OR BROWSER WALLET</span>
-                </div>
+                {/* Option 2: Privy (Embedded / Social) */}
+                <button
+                  type="button"
+                  onClick={connectPrivy}
+                  disabled={connecting !== null}
+                  style={{
+                    padding: "14px 16px",
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "6px",
+                    color: "#fff",
+                    fontWeight: 600,
+                    fontSize: "14px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <ShieldCheck size={18} color="#c7ff4a" />
+                    <span>Privy (Email / Embedded Solana)</span>
+                  </div>
+                  {connecting === "Privy" ? <Loader2 size={16} className="animate-spin" /> : <span>→</span>}
+                </button>
 
-                <div className="wallet-list">
-                  {externalWallets.length ? (
-                    externalWallets.map(({ adapter, readyState }) => {
-                      const installed =
-                        readyState === WalletReadyState.Installed || readyState === WalletReadyState.Loadable;
-                      return (
-                        <button
-                          className="wallet-method"
-                          type="button"
-                          key={adapter.name}
-                          onClick={() => connectExternal(adapter.name)}
-                          disabled={connecting !== null}
-                        >
-                          <span className="wallet-method-icon wallet-icon-image">
-                            <img src={adapter.icon} alt="" />
-                          </span>
-                          <span>
-                            <strong>{adapter.name}</strong>
-                            <small>
-                              {connecting === adapter.name
-                                ? "Waiting for approval…"
-                                : installed
-                                ? "Detected in browser"
-                                : "Open wallet"}
-                            </small>
-                          </span>
-                          <ChevronRight size={16} aria-hidden="true" />
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div className="wallet-empty-state">
-                      <Wallet size={18} aria-hidden="true" />
-                      <span>
-                        <strong>No Solana wallet extension detected</strong>
-                        <small>Install Phantom or Solflare, or log in with Privy above.</small>
-                      </span>
-                    </div>
-                  )}
-                </div>
+                <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", margin: "8px 0 0", textAlign: "center", lineHeight: 1.4 }}>
+                  Solana Devnet only • Free mock USDC & SOL available once connected.
+                </p>
               </div>
             )}
-
-            {error && !activeAddress ? <p className="wallet-error" role="alert">{error}</p> : null}
-            <footer>Solana Devnet transactions only. Never commits secrets or accesses mainnet.</footer>
           </section>
         </div>
       ) : null}

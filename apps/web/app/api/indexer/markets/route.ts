@@ -9,9 +9,68 @@ import path from "path";
 export const dynamic = "force-dynamic";
 export const maxDuration = 35;
 
+const KNOWN_MARKET_METADATA: Record<string, { title: string; rules: string }> = {
+  "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06": {
+    title: "Columbus: Mees Rottgering vs Edward Winter",
+    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  },
+  "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3": {
+    title: "Dota 2: BetBoom Team vs OG (BO3)",
+    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  },
+  "708a95e19c4438233b8b610bc0de672c46f6fb4cdfd8f25232f0aa7287fb11ac": {
+    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
+    rules: "Initial Devnet import record #1. State locked on-chain.",
+  },
+  "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ": {
+    title: "Columbus: Mees Rottgering vs Edward Winter",
+    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  },
+  "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C": {
+    title: "Dota 2: BetBoom Team vs OG (BO3)",
+    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  },
+  "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss": {
+    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
+    rules: "Initial Devnet import record #1. State locked on-chain.",
+  },
+};
+
+function normalizeMarket(m: ApiMarket): ApiMarket {
+  const byProvider = m.providerMarketId ? KNOWN_MARKET_METADATA[m.providerMarketId] : null;
+  const byAddress = m.address ? KNOWN_MARKET_METADATA[m.address] : null;
+  const known = byProvider || byAddress;
+
+  let title = m.title;
+  let rules = m.rules;
+
+  if (known) {
+    title = known.title;
+    if (!rules || /^[0-9a-fA-F]{64}$/.test(rules)) {
+      rules = known.rules;
+    }
+  } else {
+    const is64Hex = /^[0-9a-fA-F]{64}$/.test(title || "");
+    const isGeneric = /^Jupiter Live Market/i.test(title || "");
+    if (!title || is64Hex || isGeneric) {
+      const shortAddr = m.address ? `…${m.address.slice(-6)}` : "";
+      title = `Market #${m.marketId || 2} (${shortAddr})`;
+    }
+    if (/^[0-9a-fA-F]{64}$/.test(rules || "")) {
+      rules = "Percolator binary perpetual market on Solana Devnet.";
+    }
+  }
+
+  return {
+    ...m,
+    title,
+    rules: rules || "Percolator binary perpetual market on Solana Devnet.",
+  };
+}
+
 function getManifestInfo(): { title: string; rules: string } {
   const defaultInfo = {
-    title: "Dota 2: BetBoom Team vs OG (BO3) - BLAST Slam Group C — BetBoom Team",
+    title: "Dota 2: BetBoom Team vs OG (BO3) - BLAST Slam Group C",
     rules: "This market refers to the Dota 2 match between BetBoom Team and OG in the BLAST Slam Group C.\nResolves to 1 (YES) if BetBoom Team wins the match, 0 (NO) if OG wins.",
   };
 
@@ -42,7 +101,7 @@ export async function GET() {
   if (indexerBase) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000); // 30s timeout for Render spin-down
+      const timer = setTimeout(() => controller.abort(), 30000); // 30s timeout for Render free tier
       const res = await fetch(`${indexerBase}/v1/markets`, {
         cache: "no-store",
         signal: controller.signal,
@@ -51,7 +110,8 @@ export async function GET() {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          return NextResponse.json(data);
+          const normalized = data.map(normalizeMarket);
+          return NextResponse.json(normalized);
         }
       }
     } catch (err) {
@@ -68,53 +128,37 @@ export async function GET() {
     const connection = new Connection(rpcUrl, "confirmed");
     const manifestInfo = getManifestInfo();
 
-    const knownAddresses = [
-      "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ",
-      "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C",
-      DEVNET_DEPLOYMENT.importedRecord,
-    ];
+    const marketPubkey = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
+    const recordPubkey = new PublicKey(DEVNET_DEPLOYMENT.importedRecord);
 
-    const markets: ApiMarket[] = [];
-    const accounts = await connection.getMultipleAccountsInfo(
-      knownAddresses.map((a) => new PublicKey(a))
-    );
+    const [marketInfo, recordInfo] = await Promise.all([
+      connection.getAccountInfo(marketPubkey),
+      connection.getAccountInfo(recordPubkey),
+    ]);
 
-    for (let i = 0; i < accounts.length; i++) {
-      const info = accounts[i];
-      if (!info || info.data.length < 384) continue;
-      try {
-        const decoded = decodeImportedMarket(new Uint8Array(info.data));
-        markets.push({
-          address: knownAddresses[i],
-          providerMarketId: `POLY-${decoded.marketId}`,
-          title: manifestInfo.title,
-          rules: manifestInfo.rules,
-          slot: await connection.getSlot(),
-          assetIndex: decoded.assetIndex,
-          marketId: decoded.marketId.toString(),
-          status: decoded.status,
-          markE6: decoded.markE6.toString(),
-          indexE6: decoded.indexE6.toString(),
-          closeTime: decoded.externalCloseTime.toString(),
-          oracleUpdatedAt: decoded.lastSourceTimestamp.toString(),
-        });
-      } catch (e) {
-        console.warn(`Failed to decode record ${knownAddresses[i]}:`, e);
-      }
+    if (!marketInfo || !recordInfo) {
+      return NextResponse.json([]);
     }
 
-    if (markets.length > 0) {
-      return NextResponse.json(markets);
-    }
-  } catch (err: any) {
-    console.error("Failed to query onchain markets:", err);
+    const decoded = decodeImportedMarket(recordInfo.data);
+    const fallbackMarket: ApiMarket = {
+      address: DEVNET_DEPLOYMENT.importedRecord,
+      providerMarketId: "POLY-4904811-0",
+      title: manifestInfo.title,
+      rules: manifestInfo.rules,
+      slot: 0,
+      assetIndex: Number(decoded.assetIndex),
+      marketId: decoded.marketId.toString(),
+      status: decoded.status,
+      markE6: decoded.markE6.toString(),
+      indexE6: decoded.indexE6.toString(),
+      closeTime: decoded.externalCloseTime.toString(),
+      oracleUpdatedAt: new Date(Number(decoded.lastSourceTimestamp) * 1000).toISOString(),
+    };
+
+    return NextResponse.json([normalizeMarket(fallbackMarket)]);
+  } catch (rpcErr) {
+    console.error("Direct RPC Devnet market fallback failed:", rpcErr);
+    return NextResponse.json([]);
   }
-
-  return NextResponse.json(
-    {
-      error: "No markets currently available",
-      indexerUrl: indexerBase ? `${indexerBase}/v1/markets` : null,
-    },
-    { status: 503 }
-  );
 }

@@ -13,6 +13,9 @@ import fs from "fs";
 
 export const dynamic = "force-dynamic";
 
+// In-memory rate limiting: 1 request per 20 seconds per pubkey
+const rateLimitMap = new Map<string, number>();
+
 function getPayerKeypair(): Keypair | null {
   if (process.env.DEVNET_PAYER_SECRET) {
     try {
@@ -50,7 +53,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (!DEVNET_DEPLOYMENT.usdcMint) {
-      return NextResponse.json({ error: "Mock USDC mint is not configured on Devnet." }, { status: 400 });
+      return NextResponse.json(
+        { error: "USDC mint not configured" },
+        { status: 400 }
+      );
+    }
+
+    let recipientPubkey: PublicKey;
+    try {
+      recipientPubkey = new PublicKey(recipient);
+    } catch {
+      return NextResponse.json({ error: "Invalid recipient address" }, { status: 400 });
     }
 
     const payer = getPayerKeypair();
@@ -63,17 +76,52 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const recipientPubkey = new PublicKey(recipient);
+    // Rate limit check
+    const pubkeyStr = recipientPubkey.toBase58();
+    const lastRequest = rateLimitMap.get(pubkeyStr) || 0;
+    const now = Date.now();
+    if (now - lastRequest < 20_000) {
+      const waitSec = Math.ceil((20_000 - (now - lastRequest)) / 1000);
+      return NextResponse.json(
+        { error: `Rate limited. Please wait ${waitSec}s before requesting Test USDC again.` },
+        { status: 429 }
+      );
+    }
+
     const mintPubkey = new PublicKey(DEVNET_DEPLOYMENT.usdcMint);
     const rpcUrl =
       process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+      process.env.SOLANA_RPC_URL ||
       DEVNET_DEPLOYMENT.rpcUrl ||
       "https://api.devnet.solana.com";
     const connection = new Connection(rpcUrl, "confirmed");
 
+    // Check mint authority
+    const mintInfo = await connection.getAccountInfo(mintPubkey);
+    if (!mintInfo) {
+      return NextResponse.json({ error: "USDC mint account not found on devnet" }, { status: 400 });
+    }
+
+    // Mint authority is located at offset 4..36 in SPL Mint layout
+    let mintAuthorityPubkey: PublicKey | null = null;
+    if (mintInfo.data.length >= 36 && mintInfo.data[0] === 1) {
+      mintAuthorityPubkey = new PublicKey(mintInfo.data.subarray(4, 36));
+    }
+
+    if (
+      mintAuthorityPubkey &&
+      !mintAuthorityPubkey.equals(payer.publicKey) &&
+      payer.publicKey.toBase58() !== DEVNET_DEPLOYMENT.marketAuthority
+    ) {
+      return NextResponse.json(
+        { error: "payer cannot mint" },
+        { status: 403 }
+      );
+    }
+
     const tx = new Transaction();
 
-    // 1. Derive ATA
+    // 1. Derive or Create Associated Token Account
     const [ata] = PublicKey.findProgramAddressSync(
       [recipientPubkey.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintPubkey.toBuffer()],
       ASSOCIATED_TOKEN_PROGRAM_ID
@@ -97,7 +145,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Mint 500 mock USDC (SPL Token MintTo: tag 7, amount 500_000_000 atoms)
+    // 2. Mint 500 Test USDC (SPL Token MintTo: tag 7, 500_000_000 atoms)
     const amountAtoms = 500_000_000n;
     const mintData = Buffer.alloc(9);
     mintData.writeUInt8(7, 0);
@@ -115,17 +163,29 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    const sig = await sendAndConfirmTransaction(connection, tx, [payer]);
+    const sig = await sendAndConfirmTransaction(connection, tx, [payer], {
+      commitment: "confirmed",
+    });
+
+    rateLimitMap.set(pubkeyStr, now);
 
     return NextResponse.json({
       success: true,
       signature: sig,
-      recipient: recipientPubkey.toBase58(),
-      ata: ata.toBase58(),
       amount: "500 USDC",
+      recipient: pubkeyStr,
+      ata: ata.toBase58(),
+      explorerUrl: `https://explorer.solana.com/tx/${sig}?cluster=devnet`,
     });
   } catch (err: any) {
     console.error("USDC Faucet error:", err);
-    return NextResponse.json({ error: err.message || "USDC faucet error" }, { status: 500 });
+    const msg = String(err?.message || "");
+    if (msg.toLowerCase().includes("owner does not match") || msg.toLowerCase().includes("custom program error: 0x4")) {
+      return NextResponse.json({ error: "payer cannot mint" }, { status: 403 });
+    }
+    return NextResponse.json(
+      { error: err.message || "Failed to mint Test USDC" },
+      { status: 500 }
+    );
   }
 }
