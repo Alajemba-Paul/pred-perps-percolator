@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { DEVNET_DEPLOYMENT, decodePortfolioSummary } from "@/lib/contracts";
+import { getIndexerUrl } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 35;
 
 export async function GET(
   req: NextRequest,
@@ -18,14 +20,12 @@ export async function GET(
       ? DEVNET_DEPLOYMENT.demoTraderPortfolio
       : address;
 
-  const indexerBase =
-    process.env.MOXIE_API_URL ||
-    (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8787" : null);
+  const indexerBase = getIndexerUrl();
 
   if (indexerBase) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), 30000);
       const res = await fetch(`${indexerBase}/v1/portfolios/${encodeURIComponent(targetAddress)}`, {
         cache: "no-store",
         signal: controller.signal,
@@ -36,7 +36,7 @@ export async function GET(
         return NextResponse.json(data);
       }
     } catch (err) {
-      console.warn("Indexer portfolio fetch failed, falling back to direct Devnet RPC:", err);
+      console.warn(`Indexer portfolio fetch to ${indexerBase} failed, falling back to direct Devnet RPC:`, err);
     }
   }
 

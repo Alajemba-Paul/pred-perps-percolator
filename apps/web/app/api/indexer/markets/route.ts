@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { DEVNET_DEPLOYMENT, decodeImportedMarket } from "@/lib/contracts";
 import type { ApiMarket } from "@/lib/markets";
+import { getIndexerUrl } from "@/lib/api";
 import fs from "fs";
 import path from "path";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 35;
 
 function getManifestInfo(): { title: string; rules: string } {
   const defaultInfo = {
@@ -35,14 +37,12 @@ function getManifestInfo(): { title: string; rules: string } {
 }
 
 export async function GET() {
-  const indexerBase =
-    process.env.MOXIE_API_URL ||
-    (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8787" : null);
+  const indexerBase = getIndexerUrl();
 
   if (indexerBase) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), 30000); // 30s timeout for Render spin-down
       const res = await fetch(`${indexerBase}/v1/markets`, {
         cache: "no-store",
         signal: controller.signal,
@@ -50,10 +50,12 @@ export async function GET() {
       clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
-        return NextResponse.json(data);
+        if (Array.isArray(data)) {
+          return NextResponse.json(data);
+        }
       }
     } catch (err) {
-      console.warn("Indexer fetch failed, falling back to direct Devnet RPC:", err);
+      console.warn(`Indexer fetch to ${indexerBase}/v1/markets failed, falling back to direct Devnet RPC:`, err);
     }
   }
 
@@ -108,5 +110,11 @@ export async function GET() {
     console.error("Failed to query onchain markets:", err);
   }
 
-  return NextResponse.json([], { status: 503 });
+  return NextResponse.json(
+    {
+      error: "No markets currently available",
+      indexerUrl: indexerBase ? `${indexerBase}/v1/markets` : null,
+    },
+    { status: 503 }
+  );
 }

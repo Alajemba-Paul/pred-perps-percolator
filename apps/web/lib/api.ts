@@ -11,6 +11,22 @@ import path from "path";
 
 const isBrowser = typeof window !== "undefined";
 
+const DEFAULT_INDEXER_URL = "https://pred-perps-percolator.onrender.com";
+
+/**
+ * Normalizes indexer public/internal URL:
+ * - Falls back to production Render URL if unset
+ * - Trims trailing slash and /v1 suffix
+ */
+export function getIndexerUrl(): string {
+  const raw =
+    process.env.MOXIE_API_URL ||
+    process.env.NEXT_PUBLIC_MOXIE_API_URL ||
+    (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8787" : DEFAULT_INDEXER_URL);
+
+  return raw.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
 function getBaseUrl() {
   if (isBrowser) return "";
   if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
@@ -62,16 +78,10 @@ async function getDevnetOnchainMarkets(): Promise<Market[]> {
     const decoded = decodeImportedMarket(recordInfo.data);
     const manifest = getLocalJupiterManifest();
 
-    const title = manifest?.title || "Dota 2: BetBoom Team vs OG (BO3) — BetBoom Team";
+    const title = manifest?.title || "Dota 2: BetBoom Team vs OG (BO3) - BLAST Slam Group C — BetBoom Team";
     const rules =
       manifest?.rules ||
       "This market resolves to YES if BetBoom Team wins the BO3 series against OG, otherwise NO.";
-    const closeTime = manifest?.closeTimeMs
-      ? new Date(manifest.closeTimeMs).toISOString()
-      : new Date(Number(decoded.externalCloseTime) * 1000).toISOString();
-
-    const yesMark = Number(decoded.markE6) / 1_000_000;
-    const noMark = Math.max(0, 1 - yesMark);
 
     const apiMarket: ApiMarket = {
       address: DEVNET_DEPLOYMENT.importedRecord,
@@ -96,15 +106,38 @@ async function getDevnetOnchainMarkets(): Promise<Market[]> {
   }
 }
 
-/**
- * Fetch markets from indexer, falling back to on-chain Devnet state.
- * Returns an empty array if both are offline (no fake demo markets).
- */
 export type { ApiPortfolio, ApiMarket, Market };
 
+/**
+ * Fetch markets from indexer (server-side direct or browser proxy),
+ * falling back to on-chain Devnet state.
+ */
 export async function getMarkets(): Promise<Market[]> {
+  const indexerUrl = getIndexerUrl();
+
+  // 1. On server: direct fetch to Render indexer (avoids extra proxy round-trip)
+  if (!isBrowser && indexerUrl) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(`${indexerUrl}/v1/markets`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data: ApiMarket[] = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data.map(toMarket);
+        }
+      }
+    } catch (err) {
+      console.warn(`Direct server fetch to ${indexerUrl}/v1/markets failed:`, err);
+    }
+  }
+
+  // 2. In browser (or server fallback): internal proxy /api/indexer/markets
   try {
-    // 1. Try internal proxy or public indexer
     const url = isBrowser ? "/api/indexer/markets" : `${getBaseUrl()}/api/indexer/markets`;
     const res = await fetch(url, { cache: "no-store" });
     if (res.ok) {
@@ -117,7 +150,7 @@ export async function getMarkets(): Promise<Market[]> {
     console.warn("Failed fetching from /api/indexer/markets:", e);
   }
 
-  // 2. Direct Devnet on-chain query
+  // 3. Fallback to direct Devnet RPC query
   return await getDevnetOnchainMarkets();
 }
 
@@ -125,6 +158,29 @@ export async function getMarkets(): Promise<Market[]> {
  * Fetch a specific market by slug/address/id.
  */
 export async function getMarket(address: string): Promise<Market | null> {
+  const indexerUrl = getIndexerUrl();
+
+  // On server: try direct fetch for specific market
+  if (!isBrowser && indexerUrl && address) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${indexerUrl}/v1/markets/${encodeURIComponent(address)}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.address) {
+          return toMarket(data);
+        }
+      }
+    } catch {
+      // ignore and check full list
+    }
+  }
+
   const markets = await getMarkets();
   const found = markets.find(
     (m) =>
@@ -147,6 +203,26 @@ export async function getMarket(address: string): Promise<Market | null> {
 export async function getPortfolio(address: string): Promise<ApiPortfolio | null> {
   const target =
     address === "demo-trader-portfolio" ? DEVNET_DEPLOYMENT.demoTraderPortfolio : address;
+
+  const indexerUrl = getIndexerUrl();
+
+  // On server: direct fetch from indexer
+  if (!isBrowser && indexerUrl) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${indexerUrl}/v1/portfolios/${encodeURIComponent(target)}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Direct fetch to ${indexerUrl}/v1/portfolios failed:`, e);
+    }
+  }
 
   try {
     const url = isBrowser

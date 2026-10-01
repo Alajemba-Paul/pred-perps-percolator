@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
 import { DEVNET_DEPLOYMENT } from "@/lib/contracts";
+import { getIndexerUrl } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const hasSecret = Boolean(process.env.DEVNET_PAYER_SECRET);
 
+  const indexerUrl = getIndexerUrl();
   let indexerUrlHost: string | null = null;
-  if (process.env.MOXIE_API_URL) {
+  if (indexerUrl) {
     try {
-      indexerUrlHost = new URL(process.env.MOXIE_API_URL).host;
+      indexerUrlHost = new URL(indexerUrl).host;
     } catch {
-      indexerUrlHost = process.env.MOXIE_API_URL;
+      indexerUrlHost = indexerUrl;
     }
   }
 
@@ -31,5 +33,6 @@ export async function GET() {
     demoTraderPortfolio: DEVNET_DEPLOYMENT.demoTraderPortfolio,
     faucetConfigured: hasSecret,
     indexerUrlHost,
+    indexerUrl,
   });
 }

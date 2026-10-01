@@ -2,45 +2,72 @@
 
 import Link from "next/link";
 import { type Market, formatProbability, formatPrice, getStatusLabel, getLifecyclePhase, toMarket } from "@/lib/markets";
-import { ArrowRight, AlertTriangle, RefreshCw, Clock, ShieldCheck, Activity, Info } from "lucide-react";
-import { useState } from "react";
+import { ArrowRight, AlertTriangle, RefreshCw, Clock, ShieldCheck, Activity, Info, Terminal } from "lucide-react";
+import { useState, useEffect } from "react";
 
 export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) {
   const [markets, setMarkets] = useState<Market[]>(initialMarkets);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
+  const [debugLog, setDebugLog] = useState<string | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search.includes("debug=1")) {
+      setShowDebug(true);
+    }
+  }, []);
 
   async function handleRefresh() {
     setIsRefreshing(true);
-    setRetryStatus("Pinging indexer...");
+    setRetryStatus("Pinging indexer /health...");
+    setDebugLog(null);
+
+    let healthStatus = "skipped";
+    let healthSnippet = "";
+    let marketsStatus = "pending";
+    let marketsSnippet = "";
+
     try {
-      // First ping markets API
-      const res = await fetch("/api/indexer/markets", { cache: "no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setMarkets(data.map(toMarket));
-          setRetryStatus(null);
-          setIsRefreshing(false);
-          return;
+      // Step 1: Health check
+      try {
+        const healthRes = await fetch("/api/indexer/health", { cache: "no-store" });
+        healthStatus = String(healthRes.status);
+        const healthText = await healthRes.text();
+        healthSnippet = healthText.slice(0, 100);
+      } catch (hErr: any) {
+        healthStatus = "err: " + (hErr?.message || "fetch failed");
+      }
+
+      setRetryStatus("Fetching /v1/markets...");
+
+      // Step 2: Fetch markets
+      const marketsRes = await fetch("/api/indexer/markets", { cache: "no-store" });
+      marketsStatus = String(marketsRes.status);
+      const marketsText = await marketsRes.text();
+      marketsSnippet = marketsText.slice(0, 200);
+
+      const log = `Health: HTTP ${healthStatus} (${healthSnippet}) | Markets: HTTP ${marketsStatus} (${marketsSnippet})`;
+      setDebugLog(log);
+
+      if (marketsRes.ok) {
+        try {
+          const data = JSON.parse(marketsText);
+          if (Array.isArray(data) && data.length > 0) {
+            setMarkets(data.map(toMarket));
+            setRetryStatus(null);
+            setIsRefreshing(false);
+            return;
+          }
+        } catch {
+          // ignore json parse error
         }
       }
-      setRetryStatus("Waking Render indexer (cold start can take 30–60s)...");
-      // Wait 3 seconds and retry once more
-      await new Promise((r) => setTimeout(r, 3000));
-      const secondRes = await fetch("/api/indexer/markets", { cache: "no-store" });
-      if (secondRes.ok) {
-        const secondData = await secondRes.json();
-        if (Array.isArray(secondData) && secondData.length > 0) {
-          setMarkets(secondData.map(toMarket));
-          setRetryStatus(null);
-          setIsRefreshing(false);
-          return;
-        }
-      }
-      window.location.reload();
-    } catch (e) {
+
+      setRetryStatus("No markets returned yet. If Render was idle, please retry in 10s.");
+    } catch (e: any) {
       console.error("Refresh error:", e);
+      setDebugLog(`Network error: ${e?.message || e}`);
       setRetryStatus("Connection failed. Please retry.");
     } finally {
       setIsRefreshing(false);
@@ -66,13 +93,14 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
           Live markets unavailable — indexer/bootstrap offline
         </h3>
         <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", maxWidth: "540px", margin: "0 auto 12px", lineHeight: 1.5 }}>
-          The Moxie indexer is currently unreachable or no imported prediction markets are active on Devnet. Trading is disabled until an active market is indexed.
+          The Moxie indexer is currently unreachable or starting up. Render free tier spins down after idle; first load can take 30–60s while the service boots.
         </p>
         <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)", maxWidth: "500px", margin: "0 auto 20px", lineHeight: 1.4, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
           <Info size={13} color="#c7ff4a" />
-          <span>Note: Render free tier spins down after idle. First load after idle can take 30–60s while the service boots.</span>
+          <span>Click Retry to reconnect to the live Render indexer.</span>
         </p>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
           <button
             type="button"
             onClick={handleRefresh}
@@ -85,7 +113,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
               color: "#000",
               border: "none",
               borderRadius: "4px",
-              padding: "8px 16px",
+              padding: "10px 20px",
               fontSize: "13px",
               fontWeight: 600,
               cursor: isRefreshing ? "wait" : "pointer",
@@ -94,10 +122,20 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
             <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
             <span>{isRefreshing ? (retryStatus || "Connecting to Render...") : "Retry Indexer Connection"}</span>
           </button>
+
           {retryStatus && (
-            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)" }}>
+            <span style={{ fontSize: "12px", color: "#c7ff4a" }}>
               {retryStatus}
             </span>
+          )}
+
+          {debugLog && (
+            <div style={{ marginTop: "12px", padding: "8px 12px", background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", maxWidth: "600px", textAlign: "left", fontSize: "11px", color: "rgba(255,255,255,0.8)", fontFamily: "monospace", overflowX: "auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "4px", color: "#c7ff4a", marginBottom: "4px", fontWeight: 600 }}>
+                <Terminal size={12} /> Indexer Response Debug
+              </div>
+              {debugLog}
+            </div>
           )}
         </div>
       </div>
@@ -137,11 +175,21 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
         </button>
       </div>
 
+      {debugLog && (
+        <div style={{ marginBottom: "16px", padding: "8px 12px", background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", fontSize: "11px", color: "rgba(255,255,255,0.8)", fontFamily: "monospace", overflowX: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", color: "#c7ff4a", marginBottom: "4px", fontWeight: 600 }}>
+            <Terminal size={12} /> Indexer Debug
+          </div>
+          {debugLog}
+        </div>
+      )}
+
       <div className="market-cards" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         {markets.map((market) => {
           const yesPrice = market.currentPrice;
           const noPrice = Math.max(0, 1 - yesPrice);
-          const isTradable = market.status === "active";
+          const isTradable = market.status === "active" || market.status === 1;
+          const statusLabel = getStatusLabel(market.status);
           const formattedClose = market.closeTime
             ? new Date(market.closeTime).toLocaleDateString(undefined, {
                 month: "short",
@@ -181,7 +229,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                         color: isTradable ? "#c7ff4a" : "#ffb400",
                       }}
                     >
-                      {getStatusLabel(market.status)}
+                      {statusLabel}
                     </span>
                     <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>
                       {market.providerMarketId || "Imported Jupiter Market"}
@@ -199,7 +247,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                     alignItems: "center",
                     gap: "6px",
                     background: isTradable ? "#c7ff4a" : "rgba(255,255,255,0.1)",
-                    color: isTradable ? "#000" : "rgba(255,255,255,0.6)",
+                    color: isTradable ? "#000" : "rgba(255,255,255,0.7)",
                     fontWeight: 600,
                     fontSize: "13px",
                     padding: "8px 16px",
@@ -209,7 +257,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                     cursor: "pointer",
                   }}
                 >
-                  <span>Trade</span>
+                  <span>{isTradable ? "Trade" : "View"}</span>
                   <ArrowRight size={14} />
                 </Link>
               </div>

@@ -53,8 +53,8 @@ export function createIndexerApi(store: ProjectionStore): Server {
     const url = new URL(req.url ?? "/", "http://localhost");
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // Health check endpoint required by Render and frontend
-    if (url.pathname === "/health") {
+    // Health check endpoint required by Render and frontend (/health and /v1/health)
+    if (url.pathname === "/health" || url.pathname === "/v1/health") {
       return json(res, 200, {
         ok: true,
         cluster: process.env.MOXIE_CLUSTER || "devnet",

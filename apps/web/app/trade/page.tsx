@@ -5,10 +5,15 @@ export const dynamic = "force-dynamic";
 
 export default async function TradeIndexPage() {
   const markets = await getMarkets();
-  const activeMarket = markets.find((m) => m.status === "active") || markets[0];
 
-  if (activeMarket) {
-    redirect(`/trade/${activeMarket.slug || activeMarket.address}`);
+  // Pick first tradable market (status === 'active' || status === 1)
+  const tradableMarket = markets.find(
+    (m) => m.status === "active" || m.status === 1
+  );
+  const targetMarket = tradableMarket || markets[0];
+
+  if (targetMarket) {
+    redirect(`/trade/${targetMarket.slug || targetMarket.address}`);
   }
 
   redirect("/markets");
