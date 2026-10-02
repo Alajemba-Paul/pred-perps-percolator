@@ -43,7 +43,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
       m.title.startsWith("Unused Slot") ||
       m.title.startsWith("Percolator Collateral") ||
       m.title.includes("(Record #1)");
-    return isActive && !isSpecialSlot && m.status !== 4 && m.status !== "closed";
+    return isActive && !isSpecialSlot;
   });
 
   return (
