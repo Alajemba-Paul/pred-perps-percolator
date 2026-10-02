@@ -57,11 +57,28 @@ export class MoxieIndexer {
       this.source.getPortfolioAccounts(),
     ]);
 
+    const KNOWN_SLOTS: Record<string, number> = {
+      "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss": 1,
+      "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ": 2,
+      "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C": 3,
+    };
+
     const byAssetIndex = new Map<number, { a: ChainAccount; m: ReturnType<typeof decodeImportedMarket> }>();
+    const usedSlots = new Set<number>([0]);
     for (const a of markets) {
       try {
         const m = decodeImportedMarket(a.data);
-        byAssetIndex.set(m.assetIndex, { a, m });
+        let targetSlot = KNOWN_SLOTS[a.address] ?? m.assetIndex;
+        if (targetSlot === 0 || usedSlots.has(targetSlot)) {
+          for (let s = 1; s < TOTAL_MARKET_SLOTS; s++) {
+            if (!usedSlots.has(s)) {
+              targetSlot = s;
+              break;
+            }
+          }
+        }
+        usedSlots.add(targetSlot);
+        byAssetIndex.set(targetSlot, { a, m: { ...m, assetIndex: targetSlot } });
       } catch (err) {
         console.warn("[indexer] Failed to decode market account " + a.address + ":", err);
       }
