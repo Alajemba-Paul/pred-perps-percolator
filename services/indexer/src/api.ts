@@ -38,8 +38,8 @@ const json = (res: ServerResponse, status: number, body: unknown, origin?: strin
   res.end(JSON.stringify(body, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
 };
 
-export function createIndexerApi(store: ProjectionStore): Server {
-  return createServer((req: IncomingMessage, res: ServerResponse) => {
+export function createIndexerApi(store: ProjectionStore, syncFn?: () => Promise<void>): Server {
+  return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const origin = req.headers.origin;
     const cors = getCorsHeaders(origin);
 
@@ -63,9 +63,49 @@ export function createIndexerApi(store: ProjectionStore): Server {
       }, origin);
     }
 
-    // List all indexed markets
+    // Trigger sync endpoint for price keeper and deploy automation
+    if (req.method === "POST" && (url.pathname === "/v1/sync" || url.pathname === "/sync")) {
+      try {
+        if (syncFn) await syncFn();
+        return json(res, 200, {
+          ok: true,
+          markets: store.markets.size,
+          slot: store.health.indexedSlot,
+          oracleLastSlot: store.health.oracleLastSlot,
+        }, origin);
+      } catch (err: any) {
+        return json(res, 500, { error: "sync-failed", message: err?.message || String(err) }, origin);
+      }
+    }
+
+    // Real-time price update endpoint from keeper
+    if (req.method === "POST" && (url.pathname === "/v1/prices" || url.pathname === "/prices")) {
+      try {
+        let bodyStr = "";
+        for await (const chunk of req) bodyStr += chunk;
+        const body = JSON.parse(bodyStr || "{}");
+        const list = Array.isArray(body.prices) ? body.prices : [];
+        let updatedCount = 0;
+        for (const item of list) {
+          const m = store.markets.get(item.address);
+          if (m && item.markE6) {
+            store.upsertMarket({
+              ...m,
+              markE6: String(item.markE6),
+              oracleUpdatedAt: String(Math.floor(Date.now() / 1000)),
+            });
+            updatedCount++;
+          }
+        }
+        return json(res, 200, { ok: true, updated: updatedCount }, origin);
+      } catch (e: any) {
+        return json(res, 400, { error: "invalid-json", message: e?.message || String(e) }, origin);
+      }
+    }
+
+    // List all indexed markets (sorted by assetIndex ascending 0..7)
     if (url.pathname === "/v1/markets") {
-      const marketsList = [...store.markets.values()];
+      const marketsList = [...store.markets.values()].sort((a, b) => a.assetIndex - b.assetIndex);
       if (marketsList.length === 0) {
         console.warn("[indexer] GET /v1/markets requested but 0 markets currently indexed.");
       }
@@ -75,7 +115,7 @@ export function createIndexerApi(store: ProjectionStore): Server {
     // Single market and sub-resources
     if (parts[0] === "v1" && parts[1] === "markets" && parts[2]) {
       const x = store.markets.get(parts[2]);
-      if (!x) return json(res, 404, { error: "not-found", message: `Market ${parts[2]} not indexed` }, origin);
+      if (!x) return json(res, 404, { error: "not-found", message: "Market " + parts[2] + " not indexed" }, origin);
       if (parts[3] === "trades") {
         return json(res, 200, [...store.events.values()].filter((e) => e.kind === "trade" && e.marketId === x.marketId), origin);
       }
@@ -88,7 +128,7 @@ export function createIndexerApi(store: ProjectionStore): Server {
     // Portfolio and positions
     if (parts[0] === "v1" && parts[1] === "portfolios" && parts[2]) {
       const x = store.portfolios.get(parts[2]);
-      if (!x) return json(res, 404, { error: "not-found", message: `Portfolio ${parts[2]} not indexed` }, origin);
+      if (!x) return json(res, 404, { error: "not-found", message: "Portfolio " + parts[2] + " not indexed" }, origin);
       if (parts[3] === "positions") return json(res, 200, x.positions, origin);
       if (parts[3] === "transactions") {
         return json(res, 200, [...store.events.values()].filter((e) => e.portfolio === x.address), origin);

@@ -380,6 +380,47 @@ export function Terminal({ market }: { market: Market }) {
           </div>
         </div>
       </section>
+      {(market.status === 'closed' || market.status === 4) && (
+        <div
+          style={{
+            background: 'rgba(255,180,0,0.12)',
+            border: '1px solid rgba(255,180,0,0.3)',
+            borderRadius: '8px',
+            padding: '14px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            color: '#ffb400',
+            fontSize: '13px',
+          }}
+        >
+          <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+          <div>
+            <strong>Market Closed / Inactive:</strong> Trading is disabled on this asset slot. Historical or retired record retained for on-chain audit.
+          </div>
+        </div>
+      )}
+
+      {(market.status === 'unused' || market.status === 0) && (
+        <div 
+          style={{
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: '8px',
+            padding: '14px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            color: 'rgba(255,255,255,0.7)',
+            fontSize: '13px',
+          }}
+        >
+          <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+          <div>
+            <strong>Slot Unused / Candidate:</strong> This asset slot is not currently active for on-chain trading.
+          </div>
+        </div>
+      )}
 
       {/* Main Trade Section: Simplified Ticket + Position Overview */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
@@ -595,7 +636,7 @@ export function Terminal({ market }: { market: Market }) {
                 cursor: "not-allowed",
               }}
             >
-              Market Locked (Trading Disabled)
+              {market.status === 'closed' || market.status === 4 ? 'Market Closed (Trading Disabled)' : market.status === 'unused' || market.status === 0 ? 'Unused Slot (Trading Disabled)' : 'Market Locked (Trading Disabled)'}
             </button>
           ) : (
             <button

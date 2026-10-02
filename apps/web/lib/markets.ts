@@ -102,9 +102,14 @@ export const lockLabel = (seconds: string | number | bigint) => {
 
 export function getStatusLabel(status: number | string): string {
   if (typeof status === "string") {
+    const s = status.toLowerCase();
+    if (s === "locked" || s === "closed" || s === "4") return "Closed";
+    if (s === "unused" || s === "0") return "Unused";
     return status.charAt(0).toUpperCase() + status.slice(1);
   }
   switch (status) {
+    case 0:
+      return "Unused";
     case 1:
       return "Active";
     case 2:
@@ -112,11 +117,11 @@ export function getStatusLabel(status: number | string): string {
     case 3:
       return "Reduce Only";
     case 4:
-      return "Locked";
+      return "Closed";
     case 5:
       return "Resolved";
     default:
-      return "Active";
+      return "Unused";
   }
 }
 
@@ -187,6 +192,8 @@ export function resolveMarketTitleAndRules(x: {
   if (!title || is64Hex || isGeneric) {
     const shortAddr = x.address ? `…${x.address.slice(-6)}` : "";
     title = `Market #${x.marketId || 2} (${shortAddr})`;
+  } else if (title.startsWith("Percolator") || title.startsWith("Unused Slot")) {
+    return { title, rules: rules || "Percolator binary perpetual slot on Solana Devnet." };
   }
 
   if (!rules || /^[0-9a-fA-F]{64}$/.test(rules)) {
@@ -221,7 +228,7 @@ export function toMarket(x: ApiMarket): Market {
     lock: lockLabel(x.closeTime),
     closeTime: new Date(Number(x.closeTime) * 1000).toISOString(),
     leverage: "1× (Isolated)",
-    status: x.status === 1 ? "active" : x.status,
+    status: x.status === 1 ? "active" : x.status === 4 ? "closed" : x.status === 0 ? "unused" : x.status,
     marketId: x.marketId,
     assetIndex: x.assetIndex,
     oracleUpdatedAt: x.oracleUpdatedAt,

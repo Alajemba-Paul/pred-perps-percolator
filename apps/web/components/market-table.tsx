@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   type Market,
@@ -24,6 +24,13 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
   const [markets, setMarkets] = useState<Market[]>(initialMarkets);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showKeeperDoc, setShowKeeperDoc] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      handleRefresh();
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   async function handleRefresh() {
     setIsRefreshing(true);
@@ -164,8 +171,8 @@ pnpm run deploy:devnet:live`}</code>
                         letterSpacing: "0.05em",
                         padding: "2px 6px",
                         borderRadius: "3px",
-                        background: isTradable ? "rgba(199,255,74,0.15)" : "rgba(255,180,0,0.15)",
-                        color: isTradable ? "#c7ff4a" : "#ffb400",
+                        background: isTradable ? "rgba(199,255,74,0.15)" : market.status === "closed" || market.status === 4 ? "rgba(255,77,77,0.15)" : "rgba(255,255,255,0.08)",
+                        color: isTradable ? "#c7ff4a" : market.status === "closed" || market.status === 4 ? "#ff8474" : "rgba(255,255,255,0.5)",
                       }}
                     >
                       {statusLabel}
@@ -196,7 +203,7 @@ pnpm run deploy:devnet:live`}</code>
                     cursor: "pointer",
                   }}
                 >
-                  <span>{isTradable ? "Trade" : "View"}</span>
+                  <span>{isTradable ? "Trade" : market.status === "closed" || market.status === 4 ? "Closed" : "Unused"}</span>
                   <ArrowRight size={14} />
                 </Link>
               </div>

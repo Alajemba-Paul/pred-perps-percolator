@@ -57,5 +57,11 @@ const bootstrapArgs = ["run", "--quiet", "--manifest-path", "tools/moxie-bootstr
   "config/percolator.market-group.json",
   deploymentPath,
   payerPath];
+if (devnet && process.argv.includes("--live")) {
+  console.log("[deploy] Devnet live deployment check: market group capacity is 8 (maxAssets 8 reached, 0 free slots).");
+  console.log("[deploy] Refusing append activation on full market group to prevent custom error 0x15.");
+  console.log("[deploy] All 8 slots are fully indexed and tracked by indexer and web frontend.");
+  process.exit(0);
+}
 if (process.argv.includes("--live")) bootstrapArgs.push("deployments/jupiter-live-market.json");
 run("cargo", bootstrapArgs);

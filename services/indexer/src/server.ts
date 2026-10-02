@@ -75,7 +75,7 @@ const rawPort = Number(process.env.PORT);
 const port = !Number.isNaN(rawPort) && rawPort > 0 ? rawPort : 8787;
 const host = "0.0.0.0";
 
-const server = createIndexerApi(indexer.store);
+const server = createIndexerApi(indexer.store, () => indexer.sync());
 server.listen(port, host, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr?.port ? addr.port : port;
