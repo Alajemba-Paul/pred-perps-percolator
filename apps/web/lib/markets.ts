@@ -163,6 +163,26 @@ export const KNOWN_MARKET_TITLES: Record<string, { title: string; rules: string 
     title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
     rules: "Initial Devnet import record #1. State locked on-chain.",
   },
+  "POLY-5140154-0": {
+    title: "Dota 2: Aurora vs Team Liquid (BO3)",
+    rules: "This market refers to the Dota 2 match between Aurora and Team Liquid in BLAST Slam Group D. Resolves to 1 (YES) if Aurora wins, 0 (NO) if Team Liquid wins.",
+  },
+  "POLY-5174679-0": {
+    title: "Counter-Strike: Galorys vs Gremio Esports (BO3)",
+    rules: "This market refers to the Counter-Strike match between Galorys and Gremio Esports in CCT South America Series 6 Playoffs. Resolves to 1 (YES) if Galorys wins, 0 (NO) if Gremio Esports wins.",
+  },
+  "POLY-5197167-0": {
+    title: "Curitiba (Doubles): Arias/Carou vs Miguel/Ribeiro",
+    rules: "This market refers to the Curitiba Doubles tennis match between Arias/Carou and Miguel/Ribeiro. Resolves to 1 (YES) if Arias/Carou win, 0 (NO) if Miguel/Ribeiro win.",
+  },
+  "POLY-5194257-0": {
+    title: "Bitcoin: Up or Down (15-min Perp)",
+    rules: "Resolves to 1 (YES) if Bitcoin price moves UP during the active session, 0 (NO) if DOWN.",
+  },
+  "POLY-5194248-0": {
+    title: "Ethereum: Up or Down (15-min Perp)",
+    rules: "Resolves to 1 (YES) if Ethereum price moves UP during the active session, 0 (NO) if DOWN.",
+  },
 };
 
 export function resolveMarketTitleAndRules(x: {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useConnection } from "@solana/wallet-adapter-react";
 import {
   PublicKey,
   Transaction,
@@ -18,7 +18,7 @@ import {
   decodePortfolioSummary,
   buildTradeCpiData,
 } from "@/lib/contracts";
-import { usePrivyWalletState } from "./wallet-providers";
+import { useUnifiedWallet } from "./wallet-providers";
 import {
   ExternalLink,
   Loader2,
@@ -51,74 +51,11 @@ export function Terminal({ market }: { market: Market }) {
     entryPrice: number;
   } | null>(null);
 
-  const privy = usePrivyWalletState();
-  const external = useWallet();
+  const wallet = useUnifiedWallet();
   const { connection } = useConnection();
 
-  const activeAddress =
-    privy.address ||
-    (external.connected && external.publicKey ? external.publicKey.toBase58() : null) ||
-    (typeof window !== "undefined" ? localStorage.getItem("moxie_direct_phantom") : null) ||
-    null;
-
-  const activePubkey = useMemo(() => {
-    if (!activeAddress) return null;
-    try {
-      return new PublicKey(activeAddress);
-    } catch {
-      return null;
-    }
-  }, [activeAddress]);
-
-  // Unified signer
-  const signAndSendTransaction = useCallback(
-    async (tx: Transaction): Promise<string> => {
-      if (!activePubkey) throw new Error("Wallet not connected");
-
-      tx.feePayer = activePubkey;
-      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-      tx.recentBlockhash = latestBlockhash.blockhash;
-
-      if (privy.wallet) {
-        if (typeof privy.wallet.signTransaction === "function") {
-          const signedTx = await privy.wallet.signTransaction(tx);
-          const rawTx = (signedTx as any).serialize();
-          const sig = await connection.sendRawTransaction(rawTx as any, { skipPreflight: false });
-          await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-          return sig;
-        }
-        if (typeof privy.wallet.sendTransaction === "function") {
-          const sig = await privy.wallet.sendTransaction(tx, connection);
-          await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-          return sig;
-        }
-      }
-
-      if (external.sendTransaction) {
-        const sig = await external.sendTransaction(tx, connection);
-        await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-        return sig;
-      }
-
-      if (external.signTransaction) {
-        const signedTx = await external.signTransaction(tx);
-        const rawTx = (signedTx as any).serialize();
-        const sig = await connection.sendRawTransaction(rawTx as any, { skipPreflight: false });
-        await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-        return sig;
-      }
-
-      if (typeof window !== "undefined" && (window as any).solana?.signAndSendTransaction) {
-        const res = await (window as any).solana.signAndSendTransaction(tx);
-        const sig = res?.signature || res;
-        await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-        return sig;
-      }
-
-      throw new Error("No compatible signing method available on connected wallet.");
-    },
-    [activePubkey, connection, external, privy.wallet]
-  );
+  const activeAddress = wallet.activeAddress;
+  const activePubkey = wallet.activePubkey;
 
   // Poll balances and position
   const refreshAccountAndPosition = useCallback(async () => {
@@ -186,13 +123,15 @@ export function Terminal({ market }: { market: Market }) {
           (p) => p.assetIndex === Number(market.assetIndex) || p.marketId === String(market.marketId)
         );
         if (pos) {
-          const sizeContracts = Math.abs(Number(pos.sizeQ)) / 1e6;
+          const rawSize = Number(pos.sizeQ);
+          const sizeContracts = Math.abs(rawSize) / 1e6;
           const notional = Number(pos.entryNotional) / 1e6;
+          const entryPrice = sizeContracts > 0 ? notional / sizeContracts : 0;
           setPosition({
             side: pos.side,
             sizeContracts,
             notionalUsdc: notional,
-            entryPrice: sizeContracts > 0 ? notional / sizeContracts : 0,
+            entryPrice,
           });
         } else {
           setPosition(null);
@@ -228,8 +167,8 @@ export function Terminal({ market }: { market: Market }) {
 
   // Execute trade
   async function handleExecuteTrade() {
-    if (!activePubkey) {
-      setTradeError("Please connect your wallet.");
+    if (!wallet.connected || !activePubkey) {
+      setTradeError("Reconnect wallet");
       return;
     }
     if (!hasPortfolio) {
@@ -288,12 +227,13 @@ export function Terminal({ market }: { market: Market }) {
         })
       );
 
-      const sig = await signAndSendTransaction(tx);
+      const sig = await wallet.signAndSendTransaction(tx, connection);
       setTxSignature(sig);
       await refreshAccountAndPosition();
     } catch (err: any) {
       console.error("Trade execution error:", err);
-      setTradeError(err?.message || "Trade transaction rejected or failed on Devnet.");
+      const msg = err?.message || String(err);
+      setTradeError(msg.includes("Reconnect") ? "Reconnect wallet" : msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -338,11 +278,9 @@ export function Terminal({ market }: { market: Market }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
         {/* Ticket */}
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
-          <h2 style={{ fontSize: "15px", fontWeight: 600, color: "#fff", margin: 0 }}>
-            Order Ticket
-          </h2>
+          <h2 style={{ fontSize: "16px", fontWeight: 600, color: "#fff", margin: 0 }}>Place Order</h2>
 
-          {/* YES / NO Toggle */}
+          {/* YES / NO Selector */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <button
               type="button"
@@ -518,41 +456,24 @@ export function Terminal({ market }: { market: Market }) {
                 boxSizing: "border-box",
               }}
             >
-              <span>Create Trading Account on Portfolio ↗</span>
+              <span>Create Trading Account First</span>
+              <ArrowRight size={14} />
             </Link>
-          ) : !isTradable ? (
-            <button
-              type="button"
-              disabled
-              style={{
-                width: "100%",
-                padding: "14px",
-                background: "rgba(255,255,255,0.06)",
-                border: "none",
-                borderRadius: "6px",
-                color: "rgba(255,255,255,0.4)",
-                fontWeight: 600,
-                fontSize: "14px",
-                cursor: "not-allowed",
-              }}
-            >
-              Market Closed
-            </button>
           ) : (
             <button
               type="button"
               onClick={handleExecuteTrade}
-              disabled={isSubmitting || numSizeUsdc <= 0}
+              disabled={isSubmitting || !isTradable || (usdcBalance ?? 0) < numSizeUsdc}
               style={{
                 width: "100%",
                 padding: "14px",
-                background: side === "YES" ? "#c7ff4a" : "#ff8474",
+                background: isTradable && (usdcBalance ?? 0) >= numSizeUsdc ? "#c7ff4a" : "rgba(255,255,255,0.1)",
                 border: "none",
                 borderRadius: "6px",
-                color: "#000",
+                color: isTradable && (usdcBalance ?? 0) >= numSizeUsdc ? "#000" : "rgba(255,255,255,0.4)",
                 fontWeight: 700,
                 fontSize: "14px",
-                cursor: "pointer",
+                cursor: isTradable && (usdcBalance ?? 0) >= numSizeUsdc ? "pointer" : "not-allowed",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -562,20 +483,18 @@ export function Terminal({ market }: { market: Market }) {
               {isSubmitting ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  <span>Submitting Trade...</span>
+                  <span>Submitting to Devnet...</span>
                 </>
               ) : (
-                <span>Sign Trade (Buy {side} for ${numSizeUsdc.toFixed(0)})</span>
+                <span>Trade {side} Perp</span>
               )}
             </button>
           )}
         </div>
 
-        {/* Your Position Card */}
-        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", padding: "20px" }}>
-          <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#fff", margin: "0 0 16px" }}>
-            Your Position on This Event
-          </h3>
+        {/* Your Position */}
+        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+          <h2 style={{ fontSize: "16px", fontWeight: 600, color: "#fff", margin: 0 }}>Your Position</h2>
 
           {position ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -591,25 +510,51 @@ export function Terminal({ market }: { market: Market }) {
                     color: position.side === "long" ? "#c7ff4a" : "#ff8474",
                   }}
                 >
-                  {position.side === "long" ? "YES" : "NO"}
+                  {position.side === "long" ? "YES (Long)" : "NO (Short)"}
                 </span>
               </div>
 
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.6)" }}>Contracts</span>
-                <strong style={{ color: "#fff", fontSize: "14px" }}>{position.sizeContracts.toFixed(1)} units</strong>
+                <strong style={{ fontSize: "14px", color: "#fff" }}>{position.sizeContracts.toFixed(1)}</strong>
               </div>
 
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.6)" }}>Total Value</span>
-                <strong style={{ color: "#fff", fontSize: "14px" }}>${position.notionalUsdc.toFixed(2)}</strong>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.6)" }}>Entry Price</span>
+                <strong style={{ fontSize: "14px", color: "#fff" }}>
+                  {(position.entryPrice * 100).toFixed(1)}¢
+                </strong>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.6)" }}>Position Value</span>
+                <strong style={{ fontSize: "14px", color: "#fff" }}>
+                  ${position.notionalUsdc.toFixed(2)}
+                </strong>
               </div>
             </div>
           ) : (
-            <p style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", margin: 0 }}>
-              You have no active position on this event.
-            </p>
+            <div style={{ textAlign: "center", padding: "32px 16px", color: "rgba(255,255,255,0.5)", fontSize: "13px" }}>
+              You have no open position on this market.
+            </div>
           )}
+
+          <div style={{ marginTop: "auto", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "16px" }}>
+            <Link
+              href="/portfolio"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                color: "#c7ff4a",
+                fontSize: "13px",
+                textDecoration: "underline",
+              }}
+            >
+              <span>View full portfolio</span>
+              <ArrowRight size={13} />
+            </Link>
+          </div>
         </div>
       </div>
     </div>

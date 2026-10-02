@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   Check,
@@ -14,8 +14,9 @@ import {
   AlertTriangle,
   Loader2,
   ShieldCheck,
+  Coins,
 } from "lucide-react";
-import { usePrivyWalletState } from "./wallet-providers";
+import { useUnifiedWallet } from "./wallet-providers";
 import { DEVNET_DEPLOYMENT, getUserAta } from "@/lib/contracts";
 
 function shortAddress(address: string) {
@@ -31,13 +32,10 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs = 8000, errorMsg = "RPC t
 
 export function WalletControl() {
   const [open, setOpen] = useState(false);
-  const [connecting, setConnecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [faucetNotice, setFaucetNotice] = useState<string | null>(null);
-
-  // Direct window.solana (Phantom) fallback state
-  const [directPhantomAddress, setDirectPhantomAddress] = useState<string | null>(null);
+  const [isFaucetLoading, setIsFaucetLoading] = useState(false);
 
   // Balances
   const [solBalance, setSolBalance] = useState<number | null>(null);
@@ -49,34 +47,11 @@ export function WalletControl() {
   const [usdcError, setUsdcError] = useState<string | null>(null);
 
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const privy = usePrivyWalletState();
-  const external = useWallet();
+  const wallet = useUnifiedWallet();
   const { connection } = useConnection();
 
-  // Restore direct phantom session from localStorage
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("moxie_direct_phantom");
-      if (saved) {
-        setDirectPhantomAddress(saved);
-      }
-    }
-  }, []);
-
-  const activeAddress =
-    privy.address ||
-    (external.connected && external.publicKey ? external.publicKey.toBase58() : null) ||
-    directPhantomAddress ||
-    null;
-
-  const activePubkey = useMemo(() => {
-    if (!activeAddress) return null;
-    try {
-      return new PublicKey(activeAddress);
-    } catch {
-      return null;
-    }
-  }, [activeAddress]);
+  const activeAddress = wallet.activeAddress;
+  const activePubkey = wallet.activePubkey;
 
   // Fetch balances
   const refreshAccountState = useCallback(async () => {
@@ -156,50 +131,35 @@ export function WalletControl() {
   }, [refreshAccountState]);
 
   // Connect Phantom
-  async function connectDirectPhantom() {
-    setConnecting("Phantom");
+  async function connectPhantom() {
     setError(null);
     try {
-      if (typeof window === "undefined" || !(window as any).solana) {
-        throw new Error("Phantom extension not detected. Please install Phantom or use Privy.");
-      }
-      const resp = await (window as any).solana.connect();
-      const pubkey = resp.publicKey.toBase58();
-      setDirectPhantomAddress(pubkey);
-      localStorage.setItem("moxie_direct_phantom", pubkey);
+      await wallet.connectPhantom();
       setOpen(false);
     } catch (cause: any) {
-      setError(cause instanceof Error ? cause.message : "Failed to connect to Phantom.");
-    } finally {
-      setConnecting(null);
+      setError(cause?.message || "Failed to connect Phantom.");
     }
   }
 
   // Connect Privy
   function connectPrivy() {
-    setConnecting("Privy");
     setError(null);
     try {
-      privy.login();
+      wallet.connectPrivy();
     } catch (cause: any) {
-      setError(cause instanceof Error ? cause.message : "Could not open login modal.");
-    } finally {
-      setConnecting(null);
+      setError(cause?.message || "Could not open login modal.");
     }
   }
 
   // Disconnect
   async function disconnectActive() {
     try {
-      if (external.connected) await external.disconnect();
-      if (privy.authenticated) await privy.logout();
-      setDirectPhantomAddress(null);
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("moxie_direct_phantom");
-      }
+      await wallet.disconnect();
       setOpen(false);
+      setSolBalance(null);
+      setUsdcBalance(null);
     } catch (cause: any) {
-      setError(cause instanceof Error ? cause.message : "Could not disconnect wallet.");
+      setError(cause?.message || "Failed to disconnect.");
     }
   }
 
@@ -214,98 +174,147 @@ export function WalletControl() {
   function handleGetDevnetSol() {
     if (!activeAddress) return;
     copyAddress();
-    setFaucetNotice("Address copied! Opening Solana faucet in new tab...");
+    setFaucetNotice("Address copied. Opening Solana faucet in new tab...");
     window.open("https://faucet.solana.com", "_blank", "noopener,noreferrer");
     setTimeout(() => setFaucetNotice(null), 4000);
   }
 
+  async function handleGetTestUsdc() {
+    if (!activeAddress) return;
+    setIsFaucetLoading(true);
+    setFaucetNotice(null);
+    try {
+      const res = await fetch("/api/faucet/usdc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipient: activeAddress }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFaucetNotice("500 Test USDC minted! Refreshing balance...");
+        await refreshAccountState();
+      } else if (res.status === 503 || data?.unconfigured) {
+        setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
+      } else {
+        setFaucetNotice(data?.error || "Could not claim test USDC at this time.");
+      }
+    } catch {
+      setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
+    } finally {
+      setIsFaucetLoading(false);
+      setTimeout(() => setFaucetNotice(null), 6000);
+    }
+  }
+
+  const isConnected = Boolean(activeAddress);
+
   return (
     <>
       <button
-        className={`wallet-button${activeAddress ? " connected" : ""}`}
         type="button"
-        onClick={() => {
-          setError(null);
-          setFaucetNotice(null);
-          setOpen(true);
+        onClick={() => setOpen(true)}
+        className="wallet-button"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "8px 14px",
+          background: isConnected ? "rgba(199,255,74,0.1)" : "#c7ff4a",
+          border: isConnected ? "1px solid rgba(199,255,74,0.3)" : "none",
+          borderRadius: "4px",
+          color: isConnected ? "#c7ff4a" : "#000",
+          fontWeight: 600,
+          fontSize: "13px",
+          cursor: "pointer",
         }}
-        aria-haspopup="dialog"
       >
-        <Wallet size={15} aria-hidden="true" />
-        {activeAddress ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontWeight: 600 }}>{shortAddress(activeAddress)}</span>
-            <span style={{ opacity: 0.75, fontSize: "11px" }}>
-              {solBalance !== null ? `${solBalance.toFixed(2)} SOL` : solLoading ? "…" : "0 SOL"}
-            </span>
-            <span style={{ opacity: 0.75, fontSize: "11px" }}>
-              {usdcBalance !== null ? `$${usdcBalance.toFixed(0)} USDC` : usdcLoading ? "…" : "$0 USDC"}
-            </span>
-          </span>
-        ) : (
-          <span>Connect Devnet Wallet</span>
-        )}
+        <Wallet size={14} />
+        <span>{isConnected ? shortAddress(activeAddress!) : "Connect Wallet"}</span>
       </button>
 
       {open ? (
-        <div className="wallet-modal-overlay" role="presentation" onClick={() => setOpen(false)}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            backdropFilter: "blur(4px)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          }}
+        >
           <section
-            className="wallet-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="wallet-title"
-            onClick={(event) => event.stopPropagation()}
-            style={{ maxWidth: "400px" }}
+            aria-labelledby="wallet-panel-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#0c1012",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: "8px",
+              padding: "24px",
+              width: "100%",
+              maxWidth: "420px",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
+              position: "relative",
+            }}
           >
-            <header className="wallet-modal-header">
-              <div>
-                <span className="wallet-modal-badge">Solana Devnet</span>
-                <h2 id="wallet-title" style={{ fontSize: "18px" }}>
-                  {activeAddress ? "Connected Wallet" : "Connect Wallet"}
-                </h2>
-              </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h2 id="wallet-panel-title" style={{ fontSize: "16px", fontWeight: 700, margin: 0, color: "#fff" }}>
+                {isConnected ? "Devnet Wallet" : "Connect Wallet"}
+              </h2>
               <button
-                className="wallet-close"
-                type="button"
                 ref={closeButtonRef}
+                type="button"
                 onClick={() => setOpen(false)}
-                aria-label="Close"
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", padding: "4px" }}
               >
-                <X size={16} aria-hidden="true" />
+                <X size={16} />
               </button>
-            </header>
+            </div>
 
-            {activeAddress ? (
+            {isConnected ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                {/* Address Bar */}
-                <div style={{ background: "rgba(255,255,255,0.04)", padding: "10px 14px", borderRadius: "6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <small style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)", display: "block" }}>WALLET ADDRESS</small>
-                    <code style={{ fontSize: "12px", color: "#c7ff4a" }}>{shortAddress(activeAddress)}</code>
+                {/* Connected Info */}
+                <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "12px 14px", borderRadius: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                    <small style={{ color: "rgba(255,255,255,0.5)", fontSize: "11px" }}>CONNECTED ADDRESS</small>
+                    <span style={{ fontSize: "10px", color: "#c7ff4a", fontWeight: 700, textTransform: "uppercase" }}>
+                      {wallet.walletType || "Devnet"}
+                    </span>
                   </div>
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <button
-                      type="button"
-                      onClick={copyAddress}
-                      title="Copy Address"
-                      style={{ background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", padding: "4px 8px", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px" }}
-                    >
-                      {copied ? <Check size={12} color="#c7ff4a" /> : <Copy size={12} />}
-                      <span>{copied ? "Copied" : "Copy"}</span>
-                    </button>
-                    <a
-                      href={`https://explorer.solana.com/address/${activeAddress}?cluster=devnet`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="View on Solana Explorer"
-                      style={{ background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", padding: "4px 8px", color: "#fff", display: "flex", alignItems: "center" }}
-                    >
-                      <ExternalLink size={12} />
-                    </a>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                    <code style={{ fontSize: "13px", color: "#fff", wordBreak: "break-all" }}>
+                      {shortAddress(activeAddress!)}
+                    </code>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <button
+                        type="button"
+                        onClick={copyAddress}
+                        title="Copy Address"
+                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", padding: "2px" }}
+                      >
+                        {copied ? <Check size={14} color="#c7ff4a" /> : <Copy size={14} />}
+                      </button>
+                      <a
+                        href={`https://explorer.solana.com/address/${activeAddress}?cluster=devnet`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="View on Solana Explorer"
+                        style={{ color: "rgba(255,255,255,0.6)", display: "flex", alignItems: "center" }}
+                      >
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
                   </div>
                 </div>
 
-                {/* Balances Card */}
+                {/* Balances Grid */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   {/* Devnet SOL */}
                   <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", padding: "12px", borderRadius: "6px" }}>
@@ -351,7 +360,7 @@ export function WalletControl() {
                         textDecoration: "underline",
                       }}
                     >
-                      <span>Get devnet SOL ↗</span>
+                      <span>Get devnet SOL</span>
                     </button>
                   </div>
 
@@ -381,9 +390,28 @@ export function WalletControl() {
                       )}
                     </div>
 
-                    <p style={{ margin: "8px 0 0", fontSize: "10px", color: "rgba(255,255,255,0.5)", lineHeight: 1.3 }}>
-                      Test USDC is added after your trading account exists.
-                    </p>
+                    <button
+                      type="button"
+                      onClick={handleGetTestUsdc}
+                      disabled={isFaucetLoading}
+                      style={{
+                        marginTop: "10px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        color: "#c7ff4a",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        cursor: isFaucetLoading ? "not-allowed" : "pointer",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      {isFaucetLoading ? <Loader2 size={11} className="animate-spin" /> : <Coins size={11} />}
+                      <span>Get test USDC</span>
+                    </button>
                   </div>
                 </div>
 
@@ -435,8 +463,8 @@ export function WalletControl() {
 
                 <button
                   type="button"
-                  onClick={connectDirectPhantom}
-                  disabled={connecting !== null}
+                  onClick={connectPhantom}
+                  disabled={wallet.isConnecting}
                   style={{
                     padding: "14px 16px",
                     background: "#c7ff4a",
@@ -455,13 +483,13 @@ export function WalletControl() {
                     <Wallet size={18} />
                     <span>Connect Phantom</span>
                   </div>
-                  {connecting === "Phantom" ? <Loader2 size={16} className="animate-spin" /> : <span>→</span>}
+                  {wallet.isConnecting ? <Loader2 size={16} className="animate-spin" /> : <span> </span>}
                 </button>
 
                 <button
                   type="button"
                   onClick={connectPrivy}
-                  disabled={connecting !== null}
+                  disabled={wallet.isConnecting}
                   style={{
                     padding: "14px 16px",
                     background: "rgba(255,255,255,0.06)",
@@ -480,11 +508,11 @@ export function WalletControl() {
                     <ShieldCheck size={18} color="#c7ff4a" />
                     <span>Privy (Email / Google)</span>
                   </div>
-                  {connecting === "Privy" ? <Loader2 size={16} className="animate-spin" /> : <span>→</span>}
+                  {wallet.isConnecting ? <Loader2 size={16} className="animate-spin" /> : <span> </span>}
                 </button>
 
                 <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", margin: "8px 0 0", textAlign: "center", lineHeight: 1.4 }}>
-                  Solana Devnet only • Free mock USDC & SOL available once connected.
+                  Solana Devnet only   Free mock USDC & SOL available once connected.
                 </p>
               </div>
             )}

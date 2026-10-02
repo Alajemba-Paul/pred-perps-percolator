@@ -1,0 +1,37 @@
+[
+  {
+    "providerMarketId": "POLY-5140154-0",
+    "title": "Dota 2: Aurora vs Team Liquid (BO3)",
+    "rules": "This market refers to the Dota 2 match between Aurora and Team Liquid in BLAST Slam Group D. Resolves to 1 (YES) if Aurora wins, 0 (NO) if Team Liquid wins.",
+    "initialMarkE6": 555000,
+    "closeTimeMs": 1790890200000
+  },
+  {
+    "providerMarketId": "POLY-5174679-0",
+    "title": "Counter-Strike: Galorys vs Grêmio Esports (BO3)",
+    "rules": "This market refers to the Counter-Strike match between Galorys and Grêmio Esports in CCT South America Series 6 Playoffs. Resolves to 1 (YES) if Galorys wins, 0 (NO) if Grêmio Esports wins.",
+    "initialMarkE6": 720000,
+    "closeTimeMs": 1791000000000
+  },
+  {
+    "providerMarketId": "POLY-5197167-0",
+    "title": "Curitiba (Doubles): Arias/Carou vs Miguel/Ribeiro",
+    "rules": "This market refers to the Curitiba Doubles tennis match between Arias/Carou and Miguel/Ribeiro. Resolves to 1 (YES) if Arias/Carou win, 0 (NO) if Miguel/Ribeiro win.",
+    "initialMarkE6": 500000,
+    "closeTimeMs": 1791579600000
+  },
+  {
+    "providerMarketId": "POLY-5194257-0",
+    "title": "Bitcoin: Up or Down (15-min Perp)",
+    "rules": "Resolves to 1 (YES) if Bitcoin price moves UP during the active session, 0 (NO) if DOWN.",
+    "initialMarkE6": 500000,
+    "closeTimeMs": 1791579600000
+  },
+  {
+    "providerMarketId": "POLY-5194248-0",
+    "title": "Ethereum: Up or Down (15-min Perp)",
+    "rules": "Resolves to 1 (YES) if Ethereum price moves UP during the active session, 0 (NO) if DOWN.",
+    "initialMarkE6": 500000,
+    "closeTimeMs": 1791579600000
+  }
+]

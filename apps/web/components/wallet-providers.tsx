@@ -1,11 +1,35 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  type ReactNode,
+} from "react";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
-import { useWallets as usePrivySolanaWallets } from "@privy-io/react-auth/solana";
-import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
+import {
+  useWallets as usePrivySolanaWallets,
+  useSignTransaction,
+} from "@privy-io/react-auth/solana";
+import { ConnectionProvider } from "@solana/wallet-adapter-react";
+import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 
-export type PrivyWalletState = {
+export type UnifiedWallet = {
+  connected: boolean;
+  walletType: "privy" | "phantom" | null;
+  activeAddress: string | null;
+  activePubkey: PublicKey | null;
+  isConnecting: boolean;
+  error: string | null;
+  signTransaction: (tx: Transaction, connection?: Connection) => Promise<Transaction>;
+  signAndSendTransaction: (tx: Transaction, connection: Connection) => Promise<string>;
+  connectPhantom: () => Promise<void>;
+  connectPrivy: () => void;
+  disconnect: () => Promise<void>;
+  // Compatibility fields with previous PrivyWalletState
   enabled: boolean;
   ready: boolean;
   authenticated: boolean;
@@ -15,7 +39,22 @@ export type PrivyWalletState = {
   logout: () => Promise<void>;
 };
 
-const disabledPrivyState: PrivyWalletState = {
+const defaultUnifiedWallet: UnifiedWallet = {
+  connected: false,
+  walletType: null,
+  activeAddress: null,
+  activePubkey: null,
+  isConnecting: false,
+  error: null,
+  signTransaction: async () => {
+    throw new Error("Reconnect wallet");
+  },
+  signAndSendTransaction: async () => {
+    throw new Error("Reconnect wallet");
+  },
+  connectPhantom: async () => undefined,
+  connectPrivy: () => undefined,
+  disconnect: async () => undefined,
   enabled: false,
   ready: true,
   authenticated: false,
@@ -25,47 +64,264 @@ const disabledPrivyState: PrivyWalletState = {
   logout: async () => undefined,
 };
 
-const PrivyWalletContext = createContext<PrivyWalletState>(disabledPrivyState);
+const UnifiedWalletContext = createContext<UnifiedWallet>(defaultUnifiedWallet);
 
-function PrivyWalletBridge({ children }: { children: ReactNode }) {
+function UnifiedWalletBridge({ children }: { children: ReactNode }) {
   const { ready, authenticated, login, logout } = usePrivy();
   const { wallets } = usePrivySolanaWallets();
+  const { signTransaction: privySignTransaction } = useSignTransaction();
+
+  const [directPhantomAddress, setDirectPhantomAddress] = useState<string | null>(null);
+  const [activeType, setActiveType] = useState<"privy" | "phantom" | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
+
+  // Restore Phantom session if saved in localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("moxie_direct_phantom");
+      if (saved) {
+        setDirectPhantomAddress(saved);
+        if (!authenticated) {
+          setActiveType("phantom");
+        }
+      }
+    }
+  }, [authenticated]);
+
+  // Determine active address and wallet type
+  const { activeAddress, activeWalletType } = useMemo(() => {
+    if (authenticated && wallets[0]?.address) {
+      return {
+        activeAddress: wallets[0].address,
+        activeWalletType: "privy" as const,
+      };
+    }
+    if (directPhantomAddress) {
+      return {
+        activeAddress: directPhantomAddress,
+        activeWalletType: "phantom" as const,
+      };
+    }
+    if (wallets[0]?.address) {
+      return {
+        activeAddress: wallets[0].address,
+        activeWalletType: "privy" as const,
+      };
+    }
+    return {
+      activeAddress: null,
+      activeWalletType: null,
+    };
+  }, [authenticated, wallets, directPhantomAddress]);
+
+  const activePubkey = useMemo(() => {
+    if (!activeAddress) return null;
+    try {
+      return new PublicKey(activeAddress);
+    } catch {
+      return null;
+    }
+  }, [activeAddress]);
+
+  // Sign Transaction on active wallet
+  const signTransaction = useCallback(
+    async (tx: Transaction, connection?: Connection): Promise<Transaction> => {
+      if (activeWalletType === "privy" && wallets[0]) {
+        const payer = new PublicKey(wallets[0].address);
+        tx.feePayer = payer;
+        if (!tx.recentBlockhash && connection) {
+          const latest = await connection.getLatestBlockhash("confirmed");
+          tx.recentBlockhash = latest.blockhash;
+        }
+        const serialized = tx.serialize({
+          requireAllSignatures: false,
+          verifySignatures: false,
+        });
+        const res = await privySignTransaction({
+          transaction: serialized,
+          wallet: wallets[0],
+          chain: "solana:devnet",
+        });
+        return Transaction.from(res.signedTransaction);
+      }
+
+      if (activeWalletType === "phantom") {
+        if (typeof window === "undefined" || !(window as any).solana) {
+          throw new Error("Reconnect wallet");
+        }
+        const phantom = (window as any).solana;
+        if (!phantom.publicKey) {
+          await phantom.connect();
+        }
+        if (!phantom.publicKey) {
+          throw new Error("Reconnect wallet");
+        }
+        tx.feePayer = phantom.publicKey;
+        if (!tx.recentBlockhash && connection) {
+          const latest = await connection.getLatestBlockhash("confirmed");
+          tx.recentBlockhash = latest.blockhash;
+        }
+        return await phantom.signTransaction(tx);
+      }
+
+      throw new Error("Reconnect wallet");
+    },
+    [activeWalletType, wallets, privySignTransaction]
+  );
+
+  // Sign and broadcast with one-line program log extraction on error
+  const signAndSendTransaction = useCallback(
+    async (tx: Transaction, connection: Connection): Promise<string> => {
+      if (!activePubkey) {
+        throw new Error("Reconnect wallet");
+      }
+
+      tx.feePayer = activePubkey;
+      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = latestBlockhash.blockhash;
+
+      const signedTx = await signTransaction(tx, connection);
+      const rawTx = signedTx.serialize();
+
+      try {
+        const sig = await connection.sendRawTransaction(rawTx, {
+          skipPreflight: false,
+          preflightCommitment: "confirmed",
+        });
+        await connection.confirmTransaction(
+          {
+            signature: sig,
+            blockhash: latestBlockhash.blockhash,
+            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+          },
+          "confirmed"
+        );
+        return sig;
+      } catch (err: any) {
+        console.error("sendRawTransaction error:", err);
+        let logSummary = "";
+        if (Array.isArray(err?.logs) && err.logs.length > 0) {
+          const errorLine = [...err.logs].reverse().find(
+            (l: string) =>
+              l.includes("Custom program error") ||
+              l.includes("Program failed to complete") ||
+              l.includes("Error:") ||
+              l.includes("insufficient funds") ||
+              l.includes("already in use")
+          );
+          logSummary = errorLine || err.logs[err.logs.length - 1];
+        } else if (typeof err?.message === "string") {
+          logSummary = err.message;
+        }
+        const clean = logSummary
+          .replace(/^.*?Program log:s*/i, "")
+          .replace(/Transaction simulation failed:s*/i, "")
+          .replace(/^Error processing Instruction d+:s*/i, "")
+          .trim();
+        throw new Error(clean || err?.message || "Transaction failed on Solana Devnet.");
+      }
+    },
+    [activePubkey, signTransaction]
+  );
+
+  // Connect Phantom
+  const connectPhantom = useCallback(async () => {
+    setIsConnecting(true);
+    setWalletError(null);
+    try {
+      if (typeof window === "undefined" || !(window as any).solana) {
+        throw new Error("Phantom extension not detected. Please install Phantom or use Privy.");
+      }
+      const resp = await (window as any).solana.connect();
+      const pubkeyStr = resp.publicKey.toBase58();
+      setDirectPhantomAddress(pubkeyStr);
+      setActiveType("phantom");
+      if (typeof window !== "undefined") {
+        localStorage.setItem("moxie_direct_phantom", pubkeyStr);
+      }
+    } catch (err: any) {
+      setWalletError(err?.message || "Failed to connect to Phantom.");
+      throw err;
+    } finally {
+      setIsConnecting(false);
+    }
+  }, []);
+
+  // Connect Privy
+  const connectPrivy = useCallback(() => {
+    setWalletError(null);
+    setActiveType("privy");
+    login({ loginMethods: ["email", "google"] });
+  }, [login]);
+
+  // Disconnect
+  const disconnect = useCallback(async () => {
+    if (authenticated) {
+      await logout();
+    }
+    setDirectPhantomAddress(null);
+    setActiveType(null);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("moxie_direct_phantom");
+      if ((window as any).solana?.disconnect) {
+        try {
+          (window as any).solana.disconnect();
+        } catch {}
+      }
+    }
+  }, [authenticated, logout]);
+
+  const value: UnifiedWallet = {
+    connected: Boolean(activeAddress),
+    walletType: activeWalletType,
+    activeAddress,
+    activePubkey,
+    isConnecting,
+    error: walletError,
+    signTransaction,
+    signAndSendTransaction,
+    connectPhantom,
+    connectPrivy,
+    disconnect,
+    enabled: true,
+    ready,
+    authenticated,
+    address: activeAddress,
+    wallet: wallets[0] ?? null,
+    login: connectPrivy,
+    logout: disconnect,
+  };
 
   return (
-    <PrivyWalletContext.Provider
-      value={{
-        enabled: true,
-        ready,
-        authenticated,
-        address: wallets[0]?.address ?? null,
-        wallet: wallets[0] ?? null,
-        login: () => login({ loginMethods: ["email", "google"] }),
-        logout,
-      }}
-    >
+    <UnifiedWalletContext.Provider value={value}>
       {children}
-    </PrivyWalletContext.Provider>
+    </UnifiedWalletContext.Provider>
   );
 }
 
+export function useUnifiedWallet() {
+  return useContext(UnifiedWalletContext);
+}
+
+// Backward-compatible alias
 export function usePrivyWalletState() {
-  return useContext(PrivyWalletContext);
+  return useContext(UnifiedWalletContext);
 }
 
 export function WalletProviders({ children }: { children: ReactNode }) {
   const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim();
 
-  const walletStandardLayer = (
-    <ConnectionProvider endpoint={endpoint}>
-      {/* An empty adapter list intentionally enables Wallet Standard discovery. */}
-      <WalletProvider wallets={[]} autoConnect={false}>
-        {children}
-      </WalletProvider>
-    </ConnectionProvider>
-  );
-
-  if (!privyAppId) return walletStandardLayer;
+  if (!privyAppId) {
+    return (
+      <ConnectionProvider endpoint={endpoint}>
+        <UnifiedWalletContext.Provider value={defaultUnifiedWallet}>
+          {children}
+        </UnifiedWalletContext.Provider>
+      </ConnectionProvider>
+    );
+  }
 
   return (
     <PrivyProvider
@@ -84,7 +340,9 @@ export function WalletProviders({ children }: { children: ReactNode }) {
         },
       }}
     >
-      <PrivyWalletBridge>{walletStandardLayer}</PrivyWalletBridge>
+      <ConnectionProvider endpoint={endpoint}>
+        <UnifiedWalletBridge>{children}</UnifiedWalletBridge>
+      </ConnectionProvider>
     </PrivyProvider>
   );
 }

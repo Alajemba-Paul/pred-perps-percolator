@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useConnection } from "@solana/wallet-adapter-react";
 import {
   PublicKey,
   Transaction,
@@ -24,19 +24,18 @@ import {
   buildDepositData,
   buildCreatePortfolioData,
 } from "@/lib/contracts";
-import { usePrivyWalletState } from "./wallet-providers";
+import { useUnifiedWallet } from "./wallet-providers";
 import {
   Wallet,
-  ShieldCheck,
   PlusCircle,
   ArrowDownLeft,
   Loader2,
-  ExternalLink,
   ArrowRight,
   CheckCircle2,
   AlertTriangle,
   Copy,
   Check,
+  Coins,
 } from "lucide-react";
 
 if (typeof window !== "undefined" && !(window as any).Buffer) {
@@ -55,79 +54,18 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
   const [userPortfolioAddress, setUserPortfolioAddress] = useState<string | null>(null);
 
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [isFaucetLoading, setIsFaucetLoading] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedPortfolio, setCopiedPortfolio] = useState(false);
   const [faucetNotice, setFaucetNotice] = useState<string | null>(null);
 
-  const privy = usePrivyWalletState();
-  const external = useWallet();
+  const wallet = useUnifiedWallet();
   const { connection } = useConnection();
 
-  const activeAddress =
-    privy.address ||
-    (external.connected && external.publicKey ? external.publicKey.toBase58() : null) ||
-    (typeof window !== "undefined" ? localStorage.getItem("moxie_direct_phantom") : null) ||
-    null;
-
-  const activePubkey = useMemo(() => {
-    if (!activeAddress) return null;
-    try {
-      return new PublicKey(activeAddress);
-    } catch {
-      return null;
-    }
-  }, [activeAddress]);
-
-  // Unified signer supporting Privy, Phantom, and external adapters
-  const signAndSendTransaction = useCallback(
-    async (tx: Transaction): Promise<string> => {
-      if (!activePubkey) throw new Error("Wallet not connected");
-
-      tx.feePayer = activePubkey;
-      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-      tx.recentBlockhash = latestBlockhash.blockhash;
-
-      if (privy.wallet) {
-        if (typeof privy.wallet.signTransaction === "function") {
-          const signedTx = await privy.wallet.signTransaction(tx);
-          const rawTx = (signedTx as any).serialize();
-          const sig = await connection.sendRawTransaction(rawTx as any, { skipPreflight: false });
-          await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-          return sig;
-        }
-        if (typeof privy.wallet.sendTransaction === "function") {
-          const sig = await privy.wallet.sendTransaction(tx, connection);
-          await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-          return sig;
-        }
-      }
-
-      if (external.sendTransaction) {
-        const sig = await external.sendTransaction(tx, connection);
-        await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-        return sig;
-      }
-
-      if (external.signTransaction) {
-        const signedTx = await external.signTransaction(tx);
-        const rawTx = (signedTx as any).serialize();
-        const sig = await connection.sendRawTransaction(rawTx as any, { skipPreflight: false });
-        await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-        return sig;
-      }
-
-      if (typeof window !== "undefined" && (window as any).solana?.signAndSendTransaction) {
-        const res = await (window as any).solana.signAndSendTransaction(tx);
-        const sig = res?.signature || res;
-        await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
-        return sig;
-      }
-
-      throw new Error("No compatible signing method available on connected wallet.");
-    },
-    [activePubkey, connection, external, privy.wallet]
-  );
+  const activeAddress = wallet.activeAddress;
+  const activePubkey = wallet.activePubkey;
 
   // Fetch balances and onchain portfolio state
   const refreshPortfolio = useCallback(async () => {
@@ -201,18 +139,61 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
     }
   }
 
+  function copyPortfolioAddress() {
+    if (userPortfolioAddress) {
+      navigator.clipboard.writeText(userPortfolioAddress);
+      setCopiedPortfolio(true);
+      setTimeout(() => setCopiedPortfolio(false), 2000);
+    }
+  }
+
   function handleGetDevnetSol() {
     if (!activeAddress) return;
     copyAddress();
-    setFaucetNotice("Address copied! Opening Solana faucet in new tab...");
+    setFaucetNotice("Address copied. Opening Solana faucet in new tab...");
     window.open("https://faucet.solana.com", "_blank", "noopener,noreferrer");
     setTimeout(() => setFaucetNotice(null), 4000);
   }
 
-  // Action: Create Trading Account
+  // Action: Get test USDC
+  async function handleGetTestUsdc() {
+    if (!activeAddress) {
+      setActionError("Reconnect wallet");
+      return;
+    }
+
+    setIsFaucetLoading(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch("/api/faucet/usdc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipient: activeAddress }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionSuccess("Received 500 Test USDC!");
+        await refreshPortfolio();
+      } else if (res.status === 503 || data?.unconfigured) {
+        setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
+        setTimeout(() => setFaucetNotice(null), 6000);
+      } else {
+        setActionError(data?.error || "Could not claim test USDC at this time.");
+      }
+    } catch {
+      setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
+      setTimeout(() => setFaucetNotice(null), 6000);
+    } finally {
+      setIsFaucetLoading(false);
+    }
+  }
+
+  // Action: Create trading account
   async function handleCreatePortfolio() {
-    if (!activePubkey) {
-      setActionError("Please connect your wallet first.");
+    if (!wallet.connected || !activePubkey) {
+      setActionError("Reconnect wallet");
       return;
     }
 
@@ -222,7 +203,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
     }
 
     if ((solBalance ?? 0) <= 0) {
-      setActionError("You need devnet SOL to pay the Solana network fee. Click 'Get devnet SOL' above.");
+      setActionError("You need devnet SOL to pay transaction fees. Click 'Get devnet SOL' above.");
       return;
     }
 
@@ -265,13 +246,19 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
         })
       );
 
-      const sig = await signAndSendTransaction(tx);
-      setActionSuccess(`Trading account created! Tx: ${sig.slice(0, 8)}...`);
+      const sig = await wallet.signAndSendTransaction(tx, connection);
+      const pAddress = portfolioPubkey.toBase58();
+      setUserPortfolioAddress(pAddress);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`moxie_portfolio_${activePubkey.toBase58()}`, pAddress);
+      }
+      setActionSuccess(`Trading account created! Address: ${shortAddress(pAddress)}`);
       setHasPortfolio(true);
       await refreshPortfolio();
     } catch (err: any) {
       console.error("Trading account creation error:", err);
-      setActionError(err?.message || String(err) || "Failed to create trading account.");
+      const msg = err?.message || String(err);
+      setActionError(msg.includes("Reconnect") ? "Reconnect wallet" : msg);
     } finally {
       setIsActionLoading(false);
     }
@@ -279,7 +266,10 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
 
   // Action: Deposit $100 Margin
   async function handleDepositMargin() {
-    if (!activePubkey) return;
+    if (!wallet.connected || !activePubkey) {
+      setActionError("Reconnect wallet");
+      return;
+    }
     setIsActionLoading(true);
     setActionError(null);
     setActionSuccess(null);
@@ -313,11 +303,12 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
         })
       );
 
-      const sig = await signAndSendTransaction(tx);
+      const sig = await wallet.signAndSendTransaction(tx, connection);
       setActionSuccess(`Deposited $100 Margin! Tx: ${sig.slice(0, 8)}...`);
       await refreshPortfolio();
     } catch (err: any) {
-      setActionError(err?.message || "Failed to deposit margin.");
+      const msg = err?.message || String(err);
+      setActionError(msg.includes("Reconnect") ? "Reconnect wallet" : msg);
     } finally {
       setIsActionLoading(false);
     }
@@ -373,9 +364,23 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                 <span>{copied ? "Copied" : "Copy"}</span>
               </button>
             </div>
+            {userPortfolioAddress && hasPortfolio && (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px" }}>
+                <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>TRADING ACCOUNT:</span>
+                <code style={{ fontSize: "12px", color: "rgba(255,255,255,0.8)" }}>{shortAddress(userPortfolioAddress)}</code>
+                <button
+                  type="button"
+                  onClick={copyPortfolioAddress}
+                  title="Copy Trading Account Address"
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "2px", fontSize: "11px" }}
+                >
+                  {copiedPortfolio ? <Check size={11} color="#c7ff4a" /> : <Copy size={11} />}
+                </button>
+              </div>
+            )}
           </div>
 
-          <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <button
               type="button"
               onClick={handleGetDevnetSol}
@@ -385,7 +390,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                 color: "#c7ff4a",
                 fontSize: "12px",
                 fontWeight: 600,
-                padding: "6px 12px",
+                padding: "8px 14px",
                 borderRadius: "4px",
                 cursor: "pointer",
                 display: "inline-flex",
@@ -393,13 +398,37 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                 gap: "4px",
               }}
             >
-              <span>Get devnet SOL ↗</span>
+              <span>Get devnet SOL</span>
             </button>
+
+            {hasPortfolio && (
+              <button
+                type="button"
+                onClick={handleGetTestUsdc}
+                disabled={isFaucetLoading}
+                style={{
+                  background: "rgba(199,255,74,0.1)",
+                  border: "1px solid rgba(199,255,74,0.25)",
+                  color: "#c7ff4a",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  padding: "8px 14px",
+                  borderRadius: "4px",
+                  cursor: isFaucetLoading ? "not-allowed" : "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                {isFaucetLoading ? <Loader2 size={13} className="animate-spin" /> : <Coins size={13} />}
+                <span>Get test USDC</span>
+              </button>
+            )}
           </div>
         </div>
 
         {faucetNotice && (
-          <div style={{ marginTop: "12px", background: "rgba(199,255,74,0.1)", border: "1px solid rgba(199,255,74,0.3)", borderRadius: "4px", padding: "6px 10px", fontSize: "12px", color: "#c7ff4a" }}>
+          <div style={{ marginTop: "12px", background: "rgba(199,255,74,0.1)", border: "1px solid rgba(199,255,74,0.3)", borderRadius: "4px", padding: "8px 12px", fontSize: "12px", color: "#c7ff4a" }}>
             {faucetNotice}
           </div>
         )}
@@ -430,7 +459,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
         </div>
 
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
-          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>PROFIT / LOSS</small>
+          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>REALIZED PNL</small>
           <strong style={{ fontSize: "20px", color: pnlUsdc >= 0 ? "#c7ff4a" : "#ff8474" }}>
             {pnlUsdc >= 0 ? "+" : ""}${pnlUsdc.toFixed(2)}
           </strong>
@@ -446,11 +475,11 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
               Trading Account Needed
             </h3>
             <p style={{ fontSize: "13px", color: "rgba(255,255,255,0.7)", margin: 0, lineHeight: 1.5 }}>
-              Create a trading account on Solana to open positions and manage margin. A small amount of devnet SOL is required to create the account.
+              Create a trading account on Solana to open positions and manage margin.
             </p>
             {hasZeroSol && (
               <p style={{ fontSize: "12px", color: "#ffb400", margin: "8px 0 0", fontWeight: 500 }}>
-                You need devnet SOL to pay the network account fee. Click "Get devnet SOL" above to get free tokens.
+                You need devnet SOL for transaction fees. Click "Get devnet SOL" above.
               </p>
             )}
           </div>
@@ -474,7 +503,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
             }}
           >
             {isActionLoading ? <Loader2 size={14} className="animate-spin" /> : <PlusCircle size={14} />}
-            <span>{isActionLoading ? "Creating Account..." : "Create Trading Account"}</span>
+            <span>{isActionLoading ? "Creating Account..." : "Create trading account"}</span>
           </button>
         </div>
       )}
@@ -498,7 +527,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       <section style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", padding: "20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <h2 style={{ fontSize: "16px", fontWeight: 600, color: "#fff", margin: 0 }}>
-            Your Positions ({positions.length})
+            Your positions ({positions.length})
           </h2>
           {hasPortfolio && (
             <button

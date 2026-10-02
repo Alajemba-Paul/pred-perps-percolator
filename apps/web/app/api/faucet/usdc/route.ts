@@ -70,7 +70,8 @@ export async function POST(req: NextRequest) {
     if (!payer) {
       return NextResponse.json(
         {
-          error: "Faucet keypair not configured (set DEVNET_PAYER_SECRET on Vercel)",
+          error: "Faucet service is in manual mode.",
+          unconfigured: true,
         },
         { status: 503 }
       );

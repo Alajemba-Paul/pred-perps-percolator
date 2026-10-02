@@ -6,9 +6,14 @@ export const dynamic = "force-dynamic";
 export default async function TradeIndexPage() {
   const markets = await getMarkets();
 
-  // Pick first tradable market (status === 'active' || status === 1)
   const tradableMarket = markets.find(
-    (m) => m.status === "active" || m.status === 1
+    (m) =>
+      (m.status === "active" || m.status === 1) &&
+      m.status !== 4 &&
+      m.status !== "closed" &&
+      !m.title.startsWith("Unused") &&
+      !m.title.startsWith("Percolator") &&
+      !m.title.includes("(Record #1)")
   );
   const targetMarket = tradableMarket || markets[0];
 
