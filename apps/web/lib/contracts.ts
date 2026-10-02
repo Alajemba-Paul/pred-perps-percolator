@@ -1,3 +1,7 @@
+import { Buffer } from "buffer";
+if (typeof window !== "undefined" && !(window as any).Buffer) {
+  (window as any).Buffer = Buffer;
+}
 import { PublicKey, Connection, Transaction, TransactionInstruction, SystemProgram, ComputeBudgetProgram } from "@solana/web3.js";
 
 export const DEVNET_DEPLOYMENT = {

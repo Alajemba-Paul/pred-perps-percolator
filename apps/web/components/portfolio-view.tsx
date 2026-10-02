@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
@@ -10,12 +10,11 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
+import { Buffer } from "buffer";
 import {
   type Market,
   formatPrice,
   formatProbability,
-  getStatusLabel,
-  KNOWN_MARKET_TITLES,
 } from "@/lib/markets";
 import {
   DEVNET_DEPLOYMENT,
@@ -23,6 +22,7 @@ import {
   getUserAta,
   decodePortfolioSummary,
   buildDepositData,
+  buildCreatePortfolioData,
 } from "@/lib/contracts";
 import { usePrivyWalletState } from "./wallet-providers";
 import {
@@ -32,13 +32,16 @@ import {
   ArrowDownLeft,
   Loader2,
   ExternalLink,
-  Activity,
-  ArrowUpRight,
-  ArrowDownRight,
-  AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  AlertTriangle,
+  Copy,
+  Check,
 } from "lucide-react";
+
+if (typeof window !== "undefined" && !(window as any).Buffer) {
+  (window as any).Buffer = Buffer;
+}
 
 function shortAddress(address: string) {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
@@ -54,15 +57,29 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [faucetNotice, setFaucetNotice] = useState<string | null>(null);
 
   const privy = usePrivyWalletState();
   const external = useWallet();
   const { connection } = useConnection();
 
-  const activeAddress = privy.address || external.publicKey?.toBase58() || null;
-  const activePubkey = useMemo(() => (activeAddress ? new PublicKey(activeAddress) : null), [activeAddress]);
+  const activeAddress =
+    privy.address ||
+    (external.connected && external.publicKey ? external.publicKey.toBase58() : null) ||
+    (typeof window !== "undefined" ? localStorage.getItem("moxie_direct_phantom") : null) ||
+    null;
 
-  // Unified signer supporting Privy and standard wallet adapters
+  const activePubkey = useMemo(() => {
+    if (!activeAddress) return null;
+    try {
+      return new PublicKey(activeAddress);
+    } catch {
+      return null;
+    }
+  }, [activeAddress]);
+
+  // Unified signer supporting Privy, Phantom, and external adapters
   const signAndSendTransaction = useCallback(
     async (tx: Transaction): Promise<string> => {
       if (!activePubkey) throw new Error("Wallet not connected");
@@ -74,8 +91,8 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       if (privy.wallet) {
         if (typeof privy.wallet.signTransaction === "function") {
           const signedTx = await privy.wallet.signTransaction(tx);
-          const rawTx = signedTx.serialize();
-          const sig = await connection.sendRawTransaction(rawTx, { skipPreflight: false });
+          const rawTx = (signedTx as any).serialize();
+          const sig = await connection.sendRawTransaction(rawTx as any, { skipPreflight: false });
           await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
           return sig;
         }
@@ -94,16 +111,15 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
 
       if (external.signTransaction) {
         const signedTx = await external.signTransaction(tx);
-        const rawTx = signedTx.serialize();
-        const sig = await connection.sendRawTransaction(rawTx, { skipPreflight: false });
+        const rawTx = (signedTx as any).serialize();
+        const sig = await connection.sendRawTransaction(rawTx as any, { skipPreflight: false });
         await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
         return sig;
       }
 
-      // Direct window.solana fallback
       if (typeof window !== "undefined" && (window as any).solana?.signAndSendTransaction) {
         const res = await (window as any).solana.signAndSendTransaction(tx);
-        const sig = res.signature || res;
+        const sig = res?.signature || res;
         await connection.confirmTransaction({ signature: sig, ...latestBlockhash }, "confirmed");
         return sig;
       }
@@ -113,7 +129,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
     [activePubkey, connection, external, privy.wallet]
   );
 
-  // Fetch live portfolio data from connected wallet
+  // Fetch balances and onchain portfolio state
   const refreshPortfolio = useCallback(async () => {
     if (!activePubkey) {
       setSolBalance(null);
@@ -125,30 +141,28 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
     }
 
     try {
-      // 1. Fetch account state from fast server route
       const res = await fetch(`/api/account-state?address=${activePubkey.toBase58()}`, { cache: "no-store" });
       if (res.ok) {
         const state = await res.json();
-        setSolBalance(state.sol);
-        setUsdcBalance(state.usdc);
+        setSolBalance(state.sol !== null && state.sol !== undefined ? state.sol : null);
+        setUsdcBalance(state.usdc !== null && state.usdc !== undefined ? state.usdc : null);
         setHasPortfolio(Boolean(state.hasPortfolio));
-        setUserPortfolioAddress(state.portfolioPubkey);
-        setPortfolioData(state.portfolioData);
+        setUserPortfolioAddress(state.portfolioPubkey || null);
+        setPortfolioData(state.portfolioData || null);
         return;
       }
     } catch {
-      // Fall back to direct RPC
+      // Fall through to direct RPC
     }
 
     try {
-      // 2. Direct RPC fallback
       const lamports = await connection.getBalance(activePubkey);
       setSolBalance(lamports / LAMPORTS_PER_SOL);
 
       if (DEVNET_DEPLOYMENT.usdcMint) {
-        const mintPubkey = new PublicKey(DEVNET_DEPLOYMENT.usdcMint);
-        const userAta = getUserAta(activePubkey, mintPubkey);
         try {
+          const mintPubkey = new PublicKey(DEVNET_DEPLOYMENT.usdcMint);
+          const userAta = getUserAta(activePubkey, mintPubkey);
           const tokenRes = await connection.getTokenAccountBalance(userAta);
           setUsdcBalance(tokenRes.value.uiAmount ?? 0);
         } catch {
@@ -179,9 +193,39 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
     return () => clearInterval(interval);
   }, [refreshPortfolio]);
 
+  function copyAddress() {
+    if (activeAddress) {
+      navigator.clipboard.writeText(activeAddress);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }
+
+  function handleGetDevnetSol() {
+    if (!activeAddress) return;
+    copyAddress();
+    setFaucetNotice("Address copied! Opening Solana faucet in new tab...");
+    window.open("https://faucet.solana.com", "_blank", "noopener,noreferrer");
+    setTimeout(() => setFaucetNotice(null), 4000);
+  }
+
   // Action: Create Trading Account
   async function handleCreatePortfolio() {
-    if (!activePubkey) return;
+    if (!activePubkey) {
+      setActionError("Please connect your wallet first.");
+      return;
+    }
+
+    if (!DEVNET_DEPLOYMENT.marketAccount || !DEVNET_DEPLOYMENT.percolatorProgramId) {
+      setActionError("Trading network configuration is missing.");
+      return;
+    }
+
+    if ((solBalance ?? 0) <= 0) {
+      setActionError("You need devnet SOL to pay the Solana network fee. Click 'Get devnet SOL' above.");
+      return;
+    }
+
     setIsActionLoading(true);
     setActionError(null);
     setActionSuccess(null);
@@ -191,7 +235,10 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       const marketAccount = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
       const portfolioPubkey = await deriveUserPortfolioAddress(activePubkey);
 
-      const rent = await connection.getMinimumBalanceForRentExemption(DEVNET_DEPLOYMENT.portfolioAccountLen);
+      const rent = await connection
+        .getMinimumBalanceForRentExemption(DEVNET_DEPLOYMENT.portfolioAccountLen || 9563)
+        .catch(() => 80000000);
+
       const tx = new Transaction();
 
       tx.add(
@@ -199,9 +246,9 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
           fromPubkey: activePubkey,
           newAccountPubkey: portfolioPubkey,
           basePubkey: activePubkey,
-          seed: DEVNET_DEPLOYMENT.portfolioSeed,
+          seed: DEVNET_DEPLOYMENT.portfolioSeed || "moxie",
           lamports: rent,
-          space: DEVNET_DEPLOYMENT.portfolioAccountLen,
+          space: DEVNET_DEPLOYMENT.portfolioAccountLen || 9563,
           programId: percolatorProgramId,
         })
       );
@@ -214,21 +261,23 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
             { pubkey: marketAccount, isSigner: false, isWritable: true },
             { pubkey: portfolioPubkey, isSigner: false, isWritable: true },
           ],
-          data: Buffer.from([1]),
+          data: Buffer.from(buildCreatePortfolioData()),
         })
       );
 
       const sig = await signAndSendTransaction(tx);
       setActionSuccess(`Trading account created! Tx: ${sig.slice(0, 8)}...`);
+      setHasPortfolio(true);
       await refreshPortfolio();
     } catch (err: any) {
-      setActionError(err?.message || "Failed to create portfolio account.");
+      console.error("Trading account creation error:", err);
+      setActionError(err?.message || String(err) || "Failed to create trading account.");
     } finally {
       setIsActionLoading(false);
     }
   }
 
-  // Action: Deposit Margin ($100 USDC)
+  // Action: Deposit $100 Margin
   async function handleDepositMargin() {
     if (!activePubkey) return;
     setIsActionLoading(true);
@@ -280,7 +329,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
         <Wallet size={32} style={{ color: "#c7ff4a", marginBottom: "12px" }} />
         <h2 style={{ fontSize: "18px", color: "#fff", margin: "0 0 8px" }}>Wallet Not Connected</h2>
         <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.6)", margin: "0 0 20px", maxWidth: "440px", marginInline: "auto" }}>
-          Connect your Solana Devnet wallet in the top right to view your personal on-chain Percolator portfolio, margin equity, and open positions.
+          Connect your Solana Devnet wallet in the top right to view your trading account, balances, and open positions.
         </p>
       </div>
     );
@@ -289,8 +338,8 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
   const capitalUsdc = portfolioData ? Number(portfolioData.capital) / 1e6 : 0;
   const pnlUsdc = portfolioData ? Number(portfolioData.pnl) / 1e6 : 0;
   const equityUsdc = portfolioData ? Number(portfolioData.equity) / 1e6 : 0;
-  const initialReqUsdc = portfolioData ? Number(portfolioData.initialRequirement) / 1e6 : 0;
   const positions = portfolioData?.positions || [];
+  const hasZeroSol = (solBalance ?? 0) <= 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -310,86 +359,127 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                   color: hasPortfolio ? "#c7ff4a" : "#ffb400",
                 }}
               >
-                {hasPortfolio ? "Portfolio Active" : "No Portfolio"}
+                {hasPortfolio ? "Trading Account Active" : "No Trading Account"}
               </span>
             </div>
-            <code style={{ fontSize: "14px", color: "#c7ff4a" }}>{activeAddress}</code>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <code style={{ fontSize: "14px", color: "#c7ff4a" }}>{shortAddress(activeAddress)}</code>
+              <button
+                type="button"
+                onClick={copyAddress}
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "2px", fontSize: "11px" }}
+              >
+                {copied ? <Check size={12} color="#c7ff4a" /> : <Copy size={12} />}
+                <span>{copied ? "Copied" : "Copy"}</span>
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.8)" }}>
-              Wallet: <b>{solBalance !== null ? `${solBalance.toFixed(2)} SOL` : "…"}</b> • <b>${usdcBalance !== null ? usdcBalance.toFixed(2) : "0.00"} USDC</b>
-            </span>
+          <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={handleGetDevnetSol}
+              style={{
+                background: "rgba(199,255,74,0.1)",
+                border: "1px solid rgba(199,255,74,0.25)",
+                color: "#c7ff4a",
+                fontSize: "12px",
+                fontWeight: 600,
+                padding: "6px 12px",
+                borderRadius: "4px",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+            >
+              <span>Get devnet SOL ↗</span>
+            </button>
           </div>
         </div>
+
+        {faucetNotice && (
+          <div style={{ marginTop: "12px", background: "rgba(199,255,74,0.1)", border: "1px solid rgba(199,255,74,0.3)", borderRadius: "4px", padding: "6px 10px", fontSize: "12px", color: "#c7ff4a" }}>
+            {faucetNotice}
+          </div>
+        )}
       </div>
 
       {/* Metrics Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px" }}>
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
-          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>COLLATERAL (DEPOSITED)</small>
-          <strong style={{ fontSize: "22px", color: "#fff" }}>${capitalUsdc.toFixed(2)}</strong>
-          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>USDC deposited in vault</span>
+          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>DEVNET SOL</small>
+          <strong style={{ fontSize: "20px", color: "#fff" }}>
+            {solBalance !== null ? `${solBalance.toFixed(3)} SOL` : "0.000 SOL"}
+          </strong>
+          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>For Solana transaction fees</span>
+        </div>
+
+        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
+          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>TEST USDC</small>
+          <strong style={{ fontSize: "20px", color: "#fff" }}>
+            ${usdcBalance !== null ? usdcBalance.toFixed(2) : "0.00"}
+          </strong>
+          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Available trading balance</span>
         </div>
 
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
           <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>ACCOUNT EQUITY</small>
-          <strong style={{ fontSize: "22px", color: "#c7ff4a" }}>${equityUsdc.toFixed(2)}</strong>
-          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Collateral ± Unrealized PnL</span>
+          <strong style={{ fontSize: "20px", color: "#c7ff4a" }}>${equityUsdc.toFixed(2)}</strong>
+          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Deposited ± Profit</span>
         </div>
 
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
-          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>REALIZED PNL</small>
-          <strong style={{ fontSize: "22px", color: pnlUsdc >= 0 ? "#c7ff4a" : "#ff8474" }}>
+          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>PROFIT / LOSS</small>
+          <strong style={{ fontSize: "20px", color: pnlUsdc >= 0 ? "#c7ff4a" : "#ff8474" }}>
             {pnlUsdc >= 0 ? "+" : ""}${pnlUsdc.toFixed(2)}
           </strong>
-          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Settled position profits</span>
-        </div>
-
-        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
-          <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>MARGIN HEALTH</small>
-          <strong style={{ fontSize: "22px", color: "#c7ff4a", display: "flex", alignItems: "center", gap: "6px" }}>
-            <ShieldCheck size={20} /> 100% Solvency
-          </strong>
-          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>1× isolated margin backing</span>
+          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Closed position profit</span>
         </div>
       </div>
 
-      {/* Action Banners */}
+      {/* Trading Account Initialization Card */}
       {!hasPortfolio && (
-        <div style={{ background: "rgba(255,180,0,0.06)", border: "1px solid rgba(255,180,0,0.25)", borderRadius: "8px", padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-          <div>
-            <h3 style={{ fontSize: "14px", fontWeight: 600, color: "#fff", margin: "0 0 4px" }}>
-              Portfolio Account Not Initialized
+        <div style={{ background: "rgba(255,180,0,0.06)", border: "1px solid rgba(255,180,0,0.25)", borderRadius: "8px", padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+          <div style={{ maxWidth: "560px" }}>
+            <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#fff", margin: "0 0 6px" }}>
+              Trading Account Needed
             </h3>
-            <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)", margin: 0 }}>
-              Initialize your trading PDA on Percolator to open positions and deposit margin. Requires ~0.08 SOL rent.
+            <p style={{ fontSize: "13px", color: "rgba(255,255,255,0.7)", margin: 0, lineHeight: 1.5 }}>
+              Create a trading account on Solana to open positions and manage margin. A small amount of devnet SOL is required to create the account.
             </p>
+            {hasZeroSol && (
+              <p style={{ fontSize: "12px", color: "#ffb400", margin: "8px 0 0", fontWeight: 500 }}>
+                You need devnet SOL to pay the network account fee. Click "Get devnet SOL" above to get free tokens.
+              </p>
+            )}
           </div>
+
           <button
             type="button"
             onClick={handleCreatePortfolio}
-            disabled={isActionLoading}
+            disabled={isActionLoading || hasZeroSol}
             style={{
-              padding: "10px 18px",
-              background: "#c7ff4a",
+              padding: "12px 20px",
+              background: hasZeroSol ? "rgba(255,255,255,0.1)" : "#c7ff4a",
               border: "none",
-              color: "#000",
+              color: hasZeroSol ? "rgba(255,255,255,0.4)" : "#000",
               fontWeight: 700,
               fontSize: "13px",
-              borderRadius: "4px",
-              cursor: "pointer",
+              borderRadius: "6px",
+              cursor: hasZeroSol ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
               gap: "6px",
             }}
           >
-            {isActionLoading ? <Loader2 size={13} className="animate-spin" /> : <PlusCircle size={13} />}
-            <span>InitPortfolio</span>
+            {isActionLoading ? <Loader2 size={14} className="animate-spin" /> : <PlusCircle size={14} />}
+            <span>{isActionLoading ? "Creating Account..." : "Create Trading Account"}</span>
           </button>
         </div>
       )}
 
+      {/* Feedback Banners */}
       {actionSuccess && (
         <div style={{ background: "rgba(199,255,74,0.1)", border: "1px solid rgba(199,255,74,0.3)", borderRadius: "6px", padding: "12px 16px", color: "#c7ff4a", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}>
           <CheckCircle2 size={16} />
@@ -398,17 +488,17 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       )}
 
       {actionError && (
-        <div style={{ background: "rgba(255,77,77,0.1)", border: "1px solid rgba(255,77,77,0.3)", borderRadius: "6px", padding: "12px 16px", color: "#ff8474", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}>
-          <AlertTriangle size={16} />
+        <div style={{ background: "rgba(255,77,77,0.1)", border: "1px solid rgba(255,77,77,0.3)", borderRadius: "6px", padding: "12px 16px", color: "#ff8474", fontSize: "13px", display: "flex", alignItems: "flex-start", gap: "8px" }}>
+          <AlertTriangle size={16} style={{ marginTop: "2px", flexShrink: 0 }} />
           <span>{actionError}</span>
         </div>
       )}
 
-      {/* Positions Table */}
+      {/* Positions Section */}
       <section style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", padding: "20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <h2 style={{ fontSize: "16px", fontWeight: 600, color: "#fff", margin: 0 }}>
-            Open Perpetual Positions ({positions.length})
+            Your Positions ({positions.length})
           </h2>
           {hasPortfolio && (
             <button
@@ -430,7 +520,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
               }}
             >
               <ArrowDownLeft size={12} />
-              <span>Deposit $100 Margin</span>
+              <span>Deposit $100 USDC</span>
             </button>
           )}
         </div>
@@ -440,10 +530,10 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", textAlign: "left", color: "rgba(255,255,255,0.5)" }}>
-                  <th style={{ padding: "10px 12px" }}>Market</th>
+                  <th style={{ padding: "10px 12px" }}>Event</th>
                   <th style={{ padding: "10px 12px" }}>Side</th>
                   <th style={{ padding: "10px 12px" }}>Contracts</th>
-                  <th style={{ padding: "10px 12px" }}>Entry Notional</th>
+                  <th style={{ padding: "10px 12px" }}>Position Value</th>
                   <th style={{ padding: "10px 12px" }}>Action</th>
                 </tr>
               </thead>
@@ -454,7 +544,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                   const matchingMarket = markets.find(
                     (m) => m.assetIndex === pos.assetIndex || m.marketId === pos.marketId
                   );
-                  const marketTitle = matchingMarket?.title || `Market #${pos.marketId}`;
+                  const marketTitle = matchingMarket?.title || `Event #${pos.marketId}`;
 
                   return (
                     <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
@@ -470,7 +560,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                             color: pos.side === "long" ? "#c7ff4a" : "#ff8474",
                           }}
                         >
-                          {pos.side.toUpperCase()}
+                          {pos.side === "long" ? "YES" : "NO"}
                         </span>
                       </td>
                       <td style={{ padding: "12px", color: "#fff" }}>{sizeContracts.toFixed(1)}</td>
@@ -492,9 +582,9 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
             </table>
           </div>
         ) : (
-          <div style={{ textAlign: "center", padding: "40px 16px", color: "rgba(255,255,255,0.4)" }}>
+          <div style={{ textAlign: "center", padding: "36px 16px", color: "rgba(255,255,255,0.5)" }}>
             <p style={{ margin: "0 0 16px", fontSize: "13px" }}>
-              No open positions found for your connected Devnet wallet.
+              You have no open positions.
             </p>
             <Link
               href="/markets"
@@ -511,7 +601,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                 textDecoration: "none",
               }}
             >
-              <span>Explore Live Markets</span>
+              <span>View Markets</span>
               <ArrowRight size={14} />
             </Link>
           </div>
