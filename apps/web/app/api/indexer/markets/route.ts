@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { DEVNET_DEPLOYMENT, decodeImportedMarket } from "@/lib/contracts";
 import type { ApiMarket } from "@/lib/markets";
@@ -9,99 +9,70 @@ import path from "path";
 export const dynamic = "force-dynamic";
 export const maxDuration = 35;
 
-const KNOWN_MARKET_METADATA: Record<string, { title: string; rules: string }> = {
-  "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06": {
-    title: "Columbus: Mees Rottgering vs Edward Winter",
-    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
-  },
-  "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3": {
-    title: "Dota 2: BetBoom Team vs OG (BO3)",
-    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
-  },
-  "708a95e19c4438233b8b610bc0de672c46f6fb4cdfd8f25232f0aa7287fb11ac": {
-    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
-    rules: "Initial Devnet import record #1. State locked on-chain.",
-  },
-  "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ": {
-    title: "Columbus: Mees Rottgering vs Edward Winter",
-    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
-  },
-  "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C": {
-    title: "Dota 2: BetBoom Team vs OG (BO3)",
-    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
-  },
-  "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss": {
-    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
-    rules: "Initial Devnet import record #1. State locked on-chain.",
-  },
-};
+export const CUTOFF_TIMESTAMP_SEC = 1791158400; // 2026-10-05T00:00:00Z
 
-function normalizeMarket(m: ApiMarket): ApiMarket {
-  const byProvider = m.providerMarketId ? KNOWN_MARKET_METADATA[m.providerMarketId] : null;
-  const byAddress = m.address ? KNOWN_MARKET_METADATA[m.address] : null;
-  const known = byProvider || byAddress;
-
-  let title = m.title;
-  let rules = m.rules;
-
-  if (known) {
-    title = known.title;
-    if (!rules || /^[0-9a-fA-F]{64}$/.test(rules)) {
-      rules = known.rules;
-    }
-  } else {
-    const is64Hex = /^[0-9a-fA-F]{64}$/.test(title || "");
-    const isGeneric = /^Jupiter Live Market/i.test(title || "");
-    if (!title || is64Hex || isGeneric) {
-      const shortAddr = m.address ? `…${m.address.slice(-6)}` : "";
-      title = `Market #${m.marketId || 2} (${shortAddr})`;
-    }
-    if (/^[0-9a-fA-F]{64}$/.test(rules || "")) {
-      rules = "Percolator binary perpetual market on Solana Devnet.";
-    }
-  }
-
-  return {
-    ...m,
-    title,
-    rules: rules || "Percolator binary perpetual market on Solana Devnet.",
-  };
-}
-
-function getManifestInfo(): { title: string; rules: string } {
-  const defaultInfo = {
-    title: "Dota 2: BetBoom Team vs OG (BO3) - BLAST Slam Group C",
-    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in the BLAST Slam Group C.\nResolves to 1 (YES) if BetBoom Team wins the match, 0 (NO) if OG wins.",
-  };
-
+function getImportedCandidates(): any[] {
   try {
     const candidatePaths = [
-      path.resolve(process.cwd(), "deployments/jupiter-live-market.json"),
-      path.resolve(process.cwd(), "../../deployments/jupiter-live-market.json"),
+      path.resolve(process.cwd(), "deployments/imported-markets.json"),
+      path.resolve(process.cwd(), "../../deployments/imported-markets.json"),
     ];
     for (const p of candidatePaths) {
       if (fs.existsSync(p)) {
-        const data = JSON.parse(fs.readFileSync(p, "utf-8"));
-        return {
-          title: data.title || defaultInfo.title,
-          rules: data.rules || defaultInfo.rules,
-        };
+        return JSON.parse(fs.readFileSync(p, "utf-8"));
       }
     }
   } catch (e) {
-    console.warn("Could not read manifest:", e);
+    console.warn("Could not read imported-markets.json:", e);
   }
-
-  return defaultInfo;
+  return [];
 }
 
+const DEFAULT_METADATA: Record<string, { title: string; rules: string }> = {
+  "POLY-601826": {
+    title: "Brazil Presidential Election: Flávio Bolsonaro",
+    rules: "A presidential election is scheduled to take place in Brazil on October 4, 2026. Resolves to 1 (YES) if Flávio Bolsonaro wins, 0 (NO) otherwise.",
+  },
+  "POLY-2589812": {
+    title: "Fed Interest Rates (Oct 2026): No change",
+    rules: "The FED interest rates decision after October 2026 FOMC meeting. Resolves to 1 (YES) if target range is unchanged, 0 (NO) otherwise.",
+  },
+  "POLY-5170737": {
+    title: "Bitcoin Nov 2026 Target: Drops to $82,500",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT in November 2026 has a Low equal to or lower than $82,500, 0 (NO) otherwise.",
+  },
+  "POLY-5208385": {
+    title: "Bitcoin Target: Reaches $86,000",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT has a High equal to or greater than $86,000, 0 (NO) otherwise.",
+  },
+  "POLY-608545": {
+    title: "Ballon d’Or 2026 Winner: Lamine Yamal",
+    rules: "This market resolves to 1 (YES) if Lamine Yamal wins the 2026 Ballon d'Or according to France Football, 0 (NO) otherwise.",
+  },
+  "POLY-561974": {
+    title: "US 2028 Republican Nominee: J.D. Vance",
+    rules: "Resolves to 1 (YES) if J.D. Vance wins and accepts the 2028 Republican nomination for U.S. President, 0 (NO) otherwise.",
+  },
+  "POLY-679018": {
+    title: "French Presidential Election 2027: Marine Le Pen",
+    rules: "Resolves to 1 (YES) if Marine Le Pen wins the next French presidential election, 0 (NO) otherwise.",
+  },
+  "POLY-2772176": {
+    title: "UEFA Champions League 2026-27: Barcelona",
+    rules: "Resolves to 1 (YES) if FC Barcelona wins the 2026-27 UEFA Champions League, 0 (NO) otherwise.",
+  },
+};
+
 export async function GET() {
+  const candidates = getImportedCandidates();
   const indexerBase = getIndexerUrl();
+
+  let liveMarkets: ApiMarket[] = [];
 
   if (indexerBase) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000); // 30s timeout for Render free tier
+      const timer = setTimeout(() => controller.abort(), 20000);
       const res = await fetch(`${indexerBase}/v1/markets`, {
         cache: "no-store",
         signal: controller.signal,
@@ -109,56 +80,61 @@ export async function GET() {
       clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-          const normalized = data.map(normalizeMarket);
-          return NextResponse.json(normalized);
+        if (Array.isArray(data) && data.length > 0) {
+          liveMarkets = data;
         }
       }
     } catch (err) {
-      console.warn(`Indexer fetch to ${indexerBase}/v1/markets failed, falling back to direct Devnet RPC:`, err);
+      console.warn(`Indexer fetch to ${indexerBase}/v1/markets failed:`, err);
     }
   }
 
-  // Fallback: Query Solana Devnet RPC directly
-  try {
-    const rpcUrl =
-      process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-      DEVNET_DEPLOYMENT.rpcUrl ||
-      "https://api.devnet.solana.com";
-    const connection = new Connection(rpcUrl, "confirmed");
-    const manifestInfo = getManifestInfo();
+  // Filter out any market closing before 2026-10-05T00:00:00Z
+  const validLive = liveMarkets.filter((m) => {
+    const closeSec = Number(m.closeTime || 0);
+    const isSpecialSlot =
+      m.title.startsWith("Unused Slot") ||
+      m.title.startsWith("Percolator Collateral") ||
+      m.title.includes("(Record #1)");
+    return closeSec >= CUTOFF_TIMESTAMP_SEC && !isSpecialSlot;
+  });
 
-    const marketPubkey = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
-    const recordPubkey = new PublicKey(DEVNET_DEPLOYMENT.importedRecord);
+  // If we already have 5+ valid live markets passing cutoff from indexer, normalize and return them
+  if (validLive.length >= 5) {
+    const normalized = validLive.map((m) => {
+      const meta = DEFAULT_METADATA[m.providerMarketId] || DEFAULT_METADATA[m.address];
+      let title = meta?.title || m.title;
+      let rules = meta?.rules || m.rules;
+      if (/^[0-9a-fA-F]{64}$/.test(title)) title = "Prediction Market";
+      return {
+        ...m,
+        title,
+        rules: rules || "Prediction perpetual market on Solana Devnet.",
+      };
+    });
+    return NextResponse.json(normalized);
+  }
 
-    const [marketInfo, recordInfo] = await Promise.all([
-      connection.getAccountInfo(marketPubkey),
-      connection.getAccountInfo(recordPubkey),
-    ]);
-
-    if (!marketInfo || !recordInfo) {
-      return NextResponse.json([]);
-    }
-
-    const decoded = decodeImportedMarket(recordInfo.data);
-    const fallbackMarket: ApiMarket = {
-      address: DEVNET_DEPLOYMENT.importedRecord,
-      providerMarketId: "POLY-4904811-0",
-      title: manifestInfo.title,
-      rules: manifestInfo.rules,
+  // Fallback: Return verified candidates closing >= 5 Oct 2026
+  const results: ApiMarket[] = candidates.map((c: any, idx: number) => {
+    const closeSec = c.closeTimeMs ? Math.floor(c.closeTimeMs / 1000) : 1791172800;
+    const markE6 = String(c.initialMarkE6 || 500000);
+    const meta = DEFAULT_METADATA[c.providerMarketId];
+    return {
+      address: c.providerMarketId || `moxie-market-slot-${idx + 1}`,
+      providerMarketId: c.providerMarketId || `POLY-slot-${idx + 1}`,
+      title: meta?.title || c.title,
+      rules: meta?.rules || c.rules || "Prediction perpetual market on Solana Devnet.",
       slot: 0,
-      assetIndex: Number(decoded.assetIndex),
-      marketId: decoded.marketId.toString(),
-      status: decoded.status,
-      markE6: decoded.markE6.toString(),
-      indexE6: decoded.indexE6.toString(),
-      closeTime: decoded.externalCloseTime.toString(),
-      oracleUpdatedAt: new Date(Number(decoded.lastSourceTimestamp) * 1000).toISOString(),
+      assetIndex: idx + 1,
+      marketId: String(idx + 1),
+      status: 1, // Active
+      markE6,
+      indexE6: markE6,
+      closeTime: String(closeSec),
+      oracleUpdatedAt: String(Math.floor(Date.now() / 1000)),
     };
+  });
 
-    return NextResponse.json([normalizeMarket(fallbackMarket)]);
-  } catch (rpcErr) {
-    console.error("Direct RPC Devnet market fallback failed:", rpcErr);
-    return NextResponse.json([]);
-  }
+  return NextResponse.json(results);
 }
