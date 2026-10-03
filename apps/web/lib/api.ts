@@ -1,4 +1,4 @@
-import {
+﻿import {
   type ApiMarket,
   type ApiPortfolio,
   type Market,
@@ -78,14 +78,14 @@ async function getDevnetOnchainMarkets(): Promise<Market[]> {
     const decoded = decodeImportedMarket(recordInfo.data);
     const manifest = getLocalJupiterManifest();
 
-    const title = manifest?.title || "Dota 2: BetBoom Team vs OG (BO3) - BLAST Slam Group C — BetBoom Team";
+        const title = manifest?.title || "Brazil Presidential Election: Flavio Bolsonaro";
     const rules =
       manifest?.rules ||
-      "This market resolves to YES if BetBoom Team wins the BO3 series against OG, otherwise NO.";
+      "A presidential election is scheduled to take place in Brazil on October 4, 2026. Resolves to 1 (YES) if Flavio Bolsonaro wins, 0 (NO) otherwise.";
 
     const apiMarket: ApiMarket = {
       address: DEVNET_DEPLOYMENT.importedRecord,
-      providerMarketId: manifest?.providerMarketId || "POLY-4904811-0",
+      providerMarketId: manifest?.providerMarketId || "POLY-601826",
       title,
       rules,
       slot: 0,

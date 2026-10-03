@@ -8,6 +8,9 @@ if (fs.existsSync(".env")) {
   } catch (e) {}
 }
 
+// Cutoff: 5 October 2026 00:00:00 UTC (1791158400 sec / 1791158400000 ms)
+export const CUTOFF_TIMESTAMP_MS = new Date("2026-10-05T00:00:00Z").getTime();
+
 const ALREADY_IMPORTED_IDS = new Set([
   "POLY-5013959-0",
   "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06",
@@ -16,45 +19,88 @@ const ALREADY_IMPORTED_IDS = new Set([
   "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ",
   "DKmVXDGjLwdZdqXYVeVxxxM3G9L8t9nviFWspExQSD4C",
   "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss",
+  "POLY-5140154-0", // Aurora - closed Oct 1, 2026 (< Oct 5)
+  "POLY-5174679-0", // Galorys - closed Oct 3, 2026 (< Oct 5)
 ]);
 
-const FALLBACK_CANDIDATES = [
+export const FALLBACK_CANDIDATES = [
   {
-    providerMarketId: "POLY-5140154-0",
-    title: "Dota 2: Aurora vs Team Liquid (BO3)",
-    rules: "This market refers to the Dota 2 match between Aurora and Team Liquid in BLAST Slam Group D. Resolves to 1 (YES) if Aurora wins, 0 (NO) if Team Liquid wins.",
-    initialMarkE6: 555000,
-    closeTimeMs: 1790890200000,
+    providerMarketId: "POLY-601826",
+    providerEventId: "POLY-45915",
+    title: "Brazil Presidential Election: Flávio Bolsonaro",
+    rules: "A presidential election is scheduled to take place in Brazil on October 4, 2026. Resolves to 1 (YES) if Flávio Bolsonaro wins, 0 (NO) otherwise.",
+    initialMarkE6: 570000,
+    closeTimeMs: 1791172740000, // 2026-10-05T03:59:00Z
   },
   {
-    providerMarketId: "POLY-5174679-0",
-    title: "Counter-Strike: Galorys vs Grêmio Esports (BO3)",
-    rules: "This market refers to the Counter-Strike match between Galorys and Grêmio Esports in CCT South America Series 6 Playoffs. Resolves to 1 (YES) if Galorys wins, 0 (NO) if Grêmio Esports wins.",
-    initialMarkE6: 720000,
-    closeTimeMs: 1791000000000,
+    providerMarketId: "POLY-2589812",
+    providerEventId: "POLY-606422",
+    title: "Fed Interest Rates (Oct 2026): No Change",
+    rules: "The FED interest rates decision after October 2026 FOMC meeting. Resolves to 1 (YES) if target range is unchanged, 0 (NO) otherwise.",
+    initialMarkE6: 825000,
+    closeTimeMs: 1793246340000, // 2026-10-29T03:59:00Z
   },
   {
-    providerMarketId: "POLY-5197167-0",
-    title: "Curitiba (Doubles): Arias/Carou vs Miguel/Ribeiro",
-    rules: "This market refers to the Curitiba Doubles tennis match between Arias/Carou and Miguel/Ribeiro. Resolves to 1 (YES) if Arias/Carou win, 0 (NO) if Miguel/Ribeiro win.",
-    initialMarkE6: 500000,
-    closeTimeMs: 1791579600000,
+    providerMarketId: "POLY-5170737",
+    providerEventId: "POLY-1112205",
+    title: "Bitcoin Nov 2026 Target: Drops to $82,500",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT in November 2026 has a Low equal to or lower than $82,500, 0 (NO) otherwise.",
+    initialMarkE6: 775000,
+    closeTimeMs: 1793505600000, // 2026-11-01T04:00:00Z
   },
   {
-    providerMarketId: "POLY-5194257-0",
-    title: "Bitcoin: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Bitcoin price moves UP during the active session, 0 (NO) if DOWN.",
-    initialMarkE6: 500000,
-    closeTimeMs: 1791579600000,
+    providerMarketId: "POLY-608545",
+    providerEventId: "POLY-48361",
+    title: "Ballon d’Or 2026 Winner: Lamine Yamal",
+    rules: "This market resolves to 1 (YES) if Lamine Yamal wins the 2026 Ballon d'Or according to France Football, 0 (NO) otherwise.",
+    initialMarkE6: 495000,
+    closeTimeMs: 1798779540000, // 2027-01-01T04:59:00Z
   },
   {
-    providerMarketId: "POLY-5194248-0",
-    title: "Ethereum: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Ethereum price moves UP during the active session, 0 (NO) if DOWN.",
-    initialMarkE6: 500000,
-    closeTimeMs: 1791579600000,
+    providerMarketId: "POLY-5208385",
+    providerEventId: "POLY-1095772",
+    title: "Bitcoin Target: Reaches $86,000",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT has a High equal to or greater than $86,000, 0 (NO) otherwise.",
+    initialMarkE6: 265000,
+    closeTimeMs: 1791172800000, // 2026-10-05T04:00:00Z
+  },
+  {
+    providerMarketId: "POLY-561974",
+    providerEventId: "POLY-31875",
+    title: "US 2028 Republican Nominee: J.D. Vance",
+    rules: "Resolves to 1 (YES) if J.D. Vance wins and accepts the 2028 Republican nomination for U.S. President, 0 (NO) otherwise.",
+    initialMarkE6: 503000,
+    closeTimeMs: 1857272340000, // 2028-11-08T04:59:00Z
+  },
+  {
+    providerMarketId: "POLY-679018",
+    providerEventId: "POLY-79987",
+    title: "French Presidential Election 2027: Marine Le Pen",
+    rules: "Resolves to 1 (YES) if Marine Le Pen wins the next French presidential election, 0 (NO) otherwise.",
+    initialMarkE6: 456000,
+    closeTimeMs: 1808107140000, // 2027-04-19T03:59:00Z
+  },
+  {
+    providerMarketId: "POLY-2772176",
+    providerEventId: "POLY-659671",
+    title: "UEFA Champions League 2026-27: Barcelona",
+    rules: "Resolves to 1 (YES) if FC Barcelona wins the 2026-27 UEFA Champions League, 0 (NO) otherwise.",
+    initialMarkE6: 225000,
+    closeTimeMs: 1811721540000, // 2027-05-30T23:59:00Z
   },
 ];
+
+const EVENT_PREFIXES = {
+  "POLY-45915": "Brazil Presidential Election: ",
+  "POLY-606422": "Fed Interest Rates (Oct 2026): ",
+  "POLY-1112205": "Bitcoin Nov 2026 Target: ",
+  "POLY-48361": "Ballon d’Or 2026 Winner: ",
+  "POLY-1095772": "Bitcoin Target: ",
+  "POLY-31875": "US 2028 Republican Nominee: ",
+  "POLY-79987": "French Presidential Election 2027: ",
+  "POLY-659671": "UEFA Champions League 2026-27: ",
+  "POLY-32228": "2026 US Midterms: ",
+};
 
 async function fetchLiveCandidates() {
   const apiKey = process.env.JUPITER_API_KEY;
@@ -66,54 +112,48 @@ async function fetchLiveCandidates() {
   try {
     const source = new JupiterPredictionSource();
     const markets = await source.listMarkets({
-      status: "open",
-      limit: 50,
+      limit: 100,
+      cursor: "0",
     });
 
-    const candidates = markets
-      .filter((m) => m.status === "open")
-      .filter((m) => !ALREADY_IMPORTED_IDS.has(m.providerMarketId))
-      .filter((m) => m.closeTime > Date.now() + 15 * 60_000)
-      .filter((m) => m.yesBidE6 > 0 && m.yesAskE6 < 1_000_000 && m.yesAskE6 > m.yesBidE6);
+    const valid = markets.filter(
+      (m) =>
+        m.closeTime >= CUTOFF_TIMESTAMP_MS &&
+        m.status === "open" &&
+        !ALREADY_IMPORTED_IDS.has(m.providerMarketId) &&
+        m.yesBidE6 > 20000 &&
+        m.yesAskE6 < 980000 &&
+        m.yesAskE6 > m.yesBidE6
+    );
 
     const imported = [];
     const seenEvents = new Set();
 
-    for (const c of candidates) {
-      if (seenEvents.has(c.providerEventId)) continue;
-      try {
-        const evRes = await fetch(
-          `${process.env.JUPITER_PREDICTION_BASE_URL ?? "https://api.jup.ag/prediction/v1"}/events/${c.providerEventId}`,
-          { headers: { "x-api-key": apiKey, accept: "application/json" } }
-        );
-        if (!evRes.ok) continue;
-        const ev = await evRes.json();
-        const rawMarket = ev.markets?.find((m) => m.marketId === c.providerMarketId);
-        const eventTitle = ev.metadata?.title || ev.title || c.title;
+    for (const m of valid) {
+      if (seenEvents.has(m.providerEventId)) continue;
+      seenEvents.add(m.providerEventId);
 
-        let cleanTitle = `${eventTitle} - ${c.title}`;
-        if (cleanTitle.length > 70) {
-          cleanTitle = eventTitle;
-        }
+      const prefix = EVENT_PREFIXES[m.providerEventId] || "";
+      let title = prefix ? (prefix + m.title) : m.title;
+      if (title === "No change") title = "Fed Interest Rates: No Change";
+      if (title === "↓ 82,500") title = "Bitcoin: Drops to $82,500 by Nov 2026";
+      if (title === "↑ 86,000") title = "Bitcoin: Reaches $86,000 (Oct 2026)";
+      if (title.length > 70) title = title.slice(0, 67) + "...";
 
-        const markE6 = Math.round((c.yesBidE6 + c.yesAskE6) / 2);
-        const rules = [rawMarket?.rulesPrimary, rawMarket?.rulesSecondary].filter(Boolean).join("\n\n") ||
-          `This market resolves to 1 (YES) if ${c.title} occurs, 0 (NO) otherwise.`;
+      const markE6 = Math.round((m.yesBidE6 + m.yesAskE6) / 2);
+      imported.push({
+        providerMarketId: m.providerMarketId,
+        providerEventId: m.providerEventId,
+        title,
+        rules: m.rules || ("This market resolves to 1 (YES) if " + title + " occurs, 0 (NO) otherwise."),
+        initialMarkE6: markE6,
+        closeTimeMs: m.closeTime,
+      });
 
-        imported.push({
-          providerMarketId: c.providerMarketId,
-          title: cleanTitle,
-          rules,
-          initialMarkE6: markE6,
-          closeTimeMs: c.closeTime,
-        });
-
-        seenEvents.add(c.providerEventId);
-        if (imported.length >= 5) break;
-      } catch (e) {}
+      if (imported.length >= 8) break;
     }
 
-    if (imported.length >= 3) {
+    if (imported.length >= 5) {
       return imported;
     }
   } catch (err) {
@@ -126,20 +166,22 @@ async function fetchLiveCandidates() {
 async function main() {
   console.log("==================================================");
   console.log("   Moxie Jupiter Market Import Keeper             ");
+  console.log("   Cutoff: >= 5 October 2026                      ");
   console.log("==================================================");
 
   const candidates = await fetchLiveCandidates();
-  console.log(`[keeper:import] Loaded ${candidates.length} distinct open prediction market candidates:`);
+  console.log("[keeper:import] Loaded " + candidates.length + " distinct prediction market candidates closing >= 5 Oct 2026:");
   for (const c of candidates) {
-    console.log(`  - [${c.providerMarketId}] ${c.title} (${c.initialMarkE6 / 10000}¢)`);
+    console.log("  - [" + c.providerMarketId + "] " + c.title + " (" + (c.initialMarkE6 / 10000).toFixed(1) + "c, closes " + new Date(c.closeTimeMs).toISOString() + ")");
   }
 
   await mkdir("deployments", { recursive: true });
   const manifestPath = "deployments/imported-markets.json";
   await writeFile(manifestPath, JSON.stringify(candidates, null, 2) + "\n");
-  console.log(`[keeper:import] Wrote candidates to ${manifestPath}`);
+  console.log("[keeper:import] Wrote candidates to " + manifestPath);
 
-  if (candidates[0]) {
+  // Write top candidate to jupiter-live-market.json only if it passes the cutoff
+  if (candidates[0] && candidates[0].closeTimeMs >= CUTOFF_TIMESTAMP_MS) {
     const liveMarketPath = "deployments/jupiter-live-market.json";
     const existing = fs.existsSync(liveMarketPath)
       ? JSON.parse(await readFile(liveMarketPath, "utf-8"))
@@ -151,7 +193,7 @@ async function main() {
       provider: "jupiter",
     };
     await writeFile(liveMarketPath, JSON.stringify(updated, null, 2) + "\n");
-    console.log(`[keeper:import] Updated ${liveMarketPath} with next unused candidate`);
+    console.log("[keeper:import] Updated " + liveMarketPath + " with candidate " + candidates[0].providerMarketId);
   }
 
   const indexerUrls = [
@@ -165,7 +207,7 @@ async function main() {
       const url = baseUrl.replace(/\/+$/, "") + "/v1/sync";
       const res = await fetch(url, { method: "POST" });
       if (res.ok) {
-        console.log(`[keeper:import] Triggered indexer sync at ${baseUrl}`);
+        console.log("[keeper:import] Triggered indexer sync at " + baseUrl);
         break;
       }
     } catch {}

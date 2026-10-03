@@ -139,17 +139,37 @@ export function formatProbability(prob: number): string {
 }
 
 export const KNOWN_MARKET_TITLES: Record<string, { title: string; rules: string }> = {
-  "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06": {
-    title: "Columbus: Mees Rottgering vs Edward Winter",
-    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  "POLY-601826": {
+    title: "Brazil Presidential Election: Flávio Bolsonaro",
+    rules: "A presidential election is scheduled to take place in Brazil on October 4, 2026. Resolves to 1 (YES) if Flávio Bolsonaro wins, 0 (NO) otherwise.",
   },
-  "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3": {
-    title: "Dota 2: BetBoom Team vs OG (BO3)",
-    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  "POLY-2589812": {
+    title: "Fed Interest Rates (Oct 2026): No change",
+    rules: "The FED interest rates decision after October 2026 FOMC meeting. Resolves to 1 (YES) if target range is unchanged, 0 (NO) otherwise.",
   },
-  "708a95e19c4438233b8b610bc0de672c46f6fb4cdfd8f25232f0aa7287fb11ac": {
-    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
-    rules: "Initial Devnet import record #1. State locked on-chain.",
+  "POLY-5170737": {
+    title: "Bitcoin Nov 2026 Target: Drops to $82,500",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT in November 2026 has a Low equal to or lower than $82,500, 0 (NO) otherwise.",
+  },
+  "POLY-608545": {
+    title: "Ballon d’Or 2026 Winner: Lamine Yamal",
+    rules: "This market resolves to 1 (YES) if Lamine Yamal wins the 2026 Ballon d'Or according to France Football, 0 (NO) otherwise.",
+  },
+  "POLY-5208385": {
+    title: "Bitcoin Target: Reaches $86,000",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT has a High equal to or greater than $86,000, 0 (NO) otherwise.",
+  },
+  "POLY-561974": {
+    title: "US 2028 Republican Nominee: J.D. Vance",
+    rules: "Resolves to 1 (YES) if J.D. Vance wins and accepts the 2028 Republican nomination for U.S. President, 0 (NO) otherwise.",
+  },
+  "POLY-679018": {
+    title: "French Presidential Election 2027: Marine Le Pen",
+    rules: "Resolves to 1 (YES) if Marine Le Pen wins the next French presidential election, 0 (NO) otherwise.",
+  },
+  "POLY-2772176": {
+    title: "UEFA Champions League 2026-27: Barcelona",
+    rules: "Resolves to 1 (YES) if FC Barcelona wins the 2026-27 UEFA Champions League, 0 (NO) otherwise.",
   },
   "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ": {
     title: "Columbus: Mees Rottgering vs Edward Winter",
@@ -161,27 +181,7 @@ export const KNOWN_MARKET_TITLES: Record<string, { title: string; rules: string 
   },
   "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss": {
     title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
-    rules: "Initial Devnet import record #1. State locked on-chain.",
-  },
-  "POLY-5140154-0": {
-    title: "Dota 2: Aurora vs Team Liquid (BO3)",
-    rules: "This market refers to the Dota 2 match between Aurora and Team Liquid in BLAST Slam Group D. Resolves to 1 (YES) if Aurora wins, 0 (NO) if Team Liquid wins.",
-  },
-  "POLY-5174679-0": {
-    title: "Counter-Strike: Galorys vs Gremio Esports (BO3)",
-    rules: "This market refers to the Counter-Strike match between Galorys and Gremio Esports in CCT South America Series 6 Playoffs. Resolves to 1 (YES) if Galorys wins, 0 (NO) if Gremio Esports wins.",
-  },
-  "POLY-5197167-0": {
-    title: "Curitiba (Doubles): Arias/Carou vs Miguel/Ribeiro",
-    rules: "This market refers to the Curitiba Doubles tennis match between Arias/Carou and Miguel/Ribeiro. Resolves to 1 (YES) if Arias/Carou win, 0 (NO) if Miguel/Ribeiro win.",
-  },
-  "POLY-5194257-0": {
-    title: "Bitcoin: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Bitcoin price moves UP during the active session, 0 (NO) if DOWN.",
-  },
-  "POLY-5194248-0": {
-    title: "Ethereum: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Ethereum price moves UP during the active session, 0 (NO) if DOWN.",
+    rules: "Initial Devnet import record #1. State locked on-chain (Closed).",
   },
 };
 
@@ -222,6 +222,8 @@ export function resolveMarketTitleAndRules(x: {
 
   return { title, rules };
 }
+
+export const CUTOFF_TIMESTAMP_SEC = 1791158400; // 2026-10-05T00:00:00Z
 
 export function toMarket(x: ApiMarket): Market {
   const { title, rules } = resolveMarketTitleAndRules(x);

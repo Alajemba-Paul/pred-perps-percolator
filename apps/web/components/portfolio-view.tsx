@@ -55,6 +55,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
 
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [isFaucetLoading, setIsFaucetLoading] = useState(false);
+  const [isFaucetDisabled, setIsFaucetDisabled] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -66,6 +67,15 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
 
   const activeAddress = wallet.activeAddress;
   const activePubkey = wallet.activePubkey;
+
+  useEffect(() => {
+    fetch("/api/faucet/usdc")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.configured === false) setIsFaucetDisabled(true);
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch balances and onchain portfolio state
   const refreshPortfolio = useCallback(async () => {
@@ -170,21 +180,24 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       const res = await fetch("/api/faucet/usdc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipient: activeAddress }),
+        body: JSON.stringify({ wallet: activeAddress }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setActionSuccess("Received 500 Test USDC!");
+        setActionSuccess(
+          data.signature
+            ? `Minted 500 Test USDC! Tx: ${data.signature.slice(0, 8)}...`
+            : "Received 500 Test USDC!"
+        );
         await refreshPortfolio();
-      } else if (res.status === 503 || data?.unconfigured) {
-        setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
-        setTimeout(() => setFaucetNotice(null), 6000);
       } else {
-        setActionError(data?.error || "Could not claim test USDC at this time.");
+        if (res.status === 503 || data?.unconfigured) {
+          setIsFaucetDisabled(true);
+        }
+        setActionError(data?.error || "Could not claim test USDC.");
       }
-    } catch {
-      setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
-      setTimeout(() => setFaucetNotice(null), 6000);
+    } catch (err: any) {
+      setActionError(err?.message || "Could not claim test USDC.");
     } finally {
       setIsFaucetLoading(false);
     }
@@ -414,14 +427,15 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                   fontWeight: 600,
                   padding: "8px 14px",
                   borderRadius: "4px",
-                  cursor: isFaucetLoading ? "not-allowed" : "pointer",
+                  cursor: (isFaucetLoading || isFaucetDisabled) ? "not-allowed" : "pointer",
+                  opacity: isFaucetDisabled ? 0.5 : 1,
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "6px",
                 }}
               >
                 {isFaucetLoading ? <Loader2 size={13} className="animate-spin" /> : <Coins size={13} />}
-                <span>Get test USDC</span>
+                <span>Get 500 test USDC</span>
               </button>
             )}
           </div>

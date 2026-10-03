@@ -12,19 +12,40 @@ export interface ChainSource {
 }
 
 export const TOTAL_MARKET_SLOTS = 8;
+export const CUTOFF_TIMESTAMP_SEC = 1791158400; // 2026-10-05T00:00:00Z
 
 const KNOWN_MARKETS: Record<string, { title: string; rules: string }> = {
-  "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06": {
-    title: "Columbus: Mees Rottgering vs Edward Winter",
-    rules: "This market resolves to 1 (YES) if Mees Rottgering advances against Edward Winter, or 0 (NO) if Edward Winter advances.",
+  "POLY-601826": {
+    title: "Brazil Presidential Election: Flávio Bolsonaro",
+    rules: "A presidential election is scheduled to take place in Brazil on October 4, 2026. Resolves to 1 (YES) if Flávio Bolsonaro wins, 0 (NO) otherwise.",
   },
-  "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3": {
-    title: "Dota 2: BetBoom Team vs OG (BO3)",
-    rules: "This market refers to the Dota 2 match between BetBoom Team and OG in BLAST Slam Group C. Resolves to 1 (YES) if BetBoom Team wins, 0 (NO) if OG wins.",
+  "POLY-2589812": {
+    title: "Fed Interest Rates (Oct 2026): No change",
+    rules: "The FED interest rates decision after October 2026 FOMC meeting. Resolves to 1 (YES) if target range is unchanged, 0 (NO) otherwise.",
   },
-  "708a95e19c4438233b8b610bc0de672c46f6fb4cdfd8f25232f0aa7287fb11ac": {
-    title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
-    rules: "Initial Devnet import record #1. State locked on-chain (Closed).",
+  "POLY-5170737": {
+    title: "Bitcoin Nov 2026 Target: Drops to $82,500",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT in November 2026 has a Low equal to or lower than $82,500, 0 (NO) otherwise.",
+  },
+  "POLY-608545": {
+    title: "Ballon d’Or 2026 Winner: Lamine Yamal",
+    rules: "This market resolves to 1 (YES) if Lamine Yamal wins the 2026 Ballon d'Or according to France Football, 0 (NO) otherwise.",
+  },
+  "POLY-5208385": {
+    title: "Bitcoin Target: Reaches $86,000",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT has a High equal to or greater than $86,000, 0 (NO) otherwise.",
+  },
+  "POLY-561974": {
+    title: "US 2028 Republican Nominee: J.D. Vance",
+    rules: "Resolves to 1 (YES) if J.D. Vance wins and accepts the 2028 Republican nomination for U.S. President, 0 (NO) otherwise.",
+  },
+  "POLY-679018": {
+    title: "French Presidential Election 2027: Marine Le Pen",
+    rules: "Resolves to 1 (YES) if Marine Le Pen wins the next French presidential election, 0 (NO) otherwise.",
+  },
+  "POLY-2772176": {
+    title: "UEFA Champions League 2026-27: Barcelona",
+    rules: "Resolves to 1 (YES) if FC Barcelona wins the 2026-27 UEFA Champions League, 0 (NO) otherwise.",
   },
   "ZxBtBZxNJJb77cAVn3F7dPXw5NLw9G2bWjv3uYGUtLZ": {
     title: "Columbus: Mees Rottgering vs Edward Winter",
@@ -38,63 +59,64 @@ const KNOWN_MARKETS: Record<string, { title: string; rules: string }> = {
     title: "Columbus: Mees Rottgering vs Edward Winter (Record #1)",
     rules: "Initial Devnet import record #1. State locked on-chain (Closed).",
   },
-  "POLY-5140154-0": {
-    title: "Dota 2: Aurora vs Team Liquid (BO3)",
-    rules: "This market refers to the Dota 2 match between Aurora and Team Liquid in BLAST Slam Group D. Resolves to 1 (YES) if Aurora wins, 0 (NO) if Team Liquid wins.",
-  },
-  "POLY-5174679-0": {
-    title: "Counter-Strike: Galorys vs Gremio Esports (BO3)",
-    rules: "This market refers to the Counter-Strike match between Galorys and Gremio Esports in CCT South America Series 6 Playoffs. Resolves to 1 (YES) if Galorys wins, 0 (NO) if Gremio Esports wins.",
-  },
-  "POLY-5197167-0": {
-    title: "Curitiba (Doubles): Arias/Carou vs Miguel/Ribeiro",
-    rules: "This market refers to the Curitiba Doubles tennis match between Arias/Carou and Miguel/Ribeiro. Resolves to 1 (YES) if Arias/Carou win, 0 (NO) if Miguel/Ribeiro win.",
-  },
-  "POLY-5194257-0": {
-    title: "Bitcoin: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Bitcoin price moves UP during the active session, 0 (NO) if DOWN.",
-  },
-  "POLY-5194248-0": {
-    title: "Ethereum: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Ethereum price moves UP during the active session, 0 (NO) if DOWN.",
-  },
 };
 
 const DEFAULT_CANDIDATES = [
   {
-    providerMarketId: "POLY-5140154-0",
-    title: "Dota 2: Aurora vs Team Liquid (BO3)",
-    rules: "This market refers to the Dota 2 match between Aurora and Team Liquid in BLAST Slam Group D. Resolves to 1 (YES) if Aurora wins, 0 (NO) if Team Liquid wins.",
-    initialMarkE6: 555000,
-    closeTimeMs: 1790890200000,
+    providerMarketId: "POLY-601826",
+    title: "Brazil Presidential Election: Flávio Bolsonaro",
+    rules: "A presidential election is scheduled to take place in Brazil on October 4, 2026. Resolves to 1 (YES) if Flávio Bolsonaro wins, 0 (NO) otherwise.",
+    initialMarkE6: 570000,
+    closeTimeMs: 1791172740000, // 2026-10-05T03:59:00Z
   },
   {
-    providerMarketId: "POLY-5174679-0",
-    title: "Counter-Strike: Galorys vs Gremio Esports (BO3)",
-    rules: "This market refers to the Counter-Strike match between Galorys and Gremio Esports in CCT South America Series 6 Playoffs. Resolves to 1 (YES) if Galorys wins, 0 (NO) if Gremio Esports wins.",
-    initialMarkE6: 720000,
-    closeTimeMs: 1791000000000,
+    providerMarketId: "POLY-2589812",
+    title: "Fed Interest Rates (Oct 2026): No change",
+    rules: "The FED interest rates decision after October 2026 FOMC meeting. Resolves to 1 (YES) if target range is unchanged, 0 (NO) otherwise.",
+    initialMarkE6: 825000,
+    closeTimeMs: 1793246340000, // 2026-10-29T03:59:00Z
   },
   {
-    providerMarketId: "POLY-5197167-0",
-    title: "Curitiba (Doubles): Arias/Carou vs Miguel/Ribeiro",
-    rules: "This market refers to the Curitiba Doubles tennis match between Arias/Carou and Miguel/Ribeiro. Resolves to 1 (YES) if Arias/Carou win, 0 (NO) if Miguel/Ribeiro win.",
-    initialMarkE6: 500000,
-    closeTimeMs: 1791579600000,
+    providerMarketId: "POLY-5170737",
+    title: "Bitcoin Nov 2026 Target: Drops to $82,500",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT in November 2026 has a Low equal to or lower than $82,500, 0 (NO) otherwise.",
+    initialMarkE6: 775000,
+    closeTimeMs: 1793505600000, // 2026-11-01T04:00:00Z
   },
   {
-    providerMarketId: "POLY-5194257-0",
-    title: "Bitcoin: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Bitcoin price moves UP during the active session, 0 (NO) if DOWN.",
-    initialMarkE6: 500000,
-    closeTimeMs: 1791579600000,
+    providerMarketId: "POLY-608545",
+    title: "Ballon d’Or 2026 Winner: Lamine Yamal",
+    rules: "This market resolves to 1 (YES) if Lamine Yamal wins the 2026 Ballon d'Or according to France Football, 0 (NO) otherwise.",
+    initialMarkE6: 494000,
+    closeTimeMs: 1798779540000, // 2027-01-01T04:59:00Z
   },
   {
-    providerMarketId: "POLY-5194248-0",
-    title: "Ethereum: Up or Down (15-min Perp)",
-    rules: "Resolves to 1 (YES) if Ethereum price moves UP during the active session, 0 (NO) if DOWN.",
-    initialMarkE6: 500000,
-    closeTimeMs: 1791579600000,
+    providerMarketId: "POLY-5208385",
+    title: "Bitcoin Target: Reaches $86,000",
+    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT has a High equal to or greater than $86,000, 0 (NO) otherwise.",
+    initialMarkE6: 220000,
+    closeTimeMs: 1791172800000, // 2026-10-05T04:00:00Z
+  },
+  {
+    providerMarketId: "POLY-561974",
+    title: "US 2028 Republican Nominee: J.D. Vance",
+    rules: "Resolves to 1 (YES) if J.D. Vance wins and accepts the 2028 Republican nomination for U.S. President, 0 (NO) otherwise.",
+    initialMarkE6: 503000,
+    closeTimeMs: 1857272340000, // 2028-11-08T04:59:00Z
+  },
+  {
+    providerMarketId: "POLY-679018",
+    title: "French Presidential Election 2027: Marine Le Pen",
+    rules: "Resolves to 1 (YES) if Marine Le Pen wins the next French presidential election, 0 (NO) otherwise.",
+    initialMarkE6: 456000,
+    closeTimeMs: 1808107140000, // 2027-04-19T03:59:00Z
+  },
+  {
+    providerMarketId: "POLY-2772176",
+    title: "UEFA Champions League 2026-27: Barcelona",
+    rules: "Resolves to 1 (YES) if FC Barcelona wins the 2026-27 UEFA Champions League, 0 (NO) otherwise.",
+    initialMarkE6: 225000,
+    closeTimeMs: 1811721540000, // 2027-05-30T23:59:00Z
   },
 ];
 
@@ -142,157 +164,155 @@ export class MoxieIndexer {
       }
     }
 
-    // Load candidate open prediction markets
+    // Load candidate open prediction markets closing on or after 5 October 2026
     let candidateList: any[] = DEFAULT_CANDIDATES;
     try {
       if (fs.existsSync("deployments/imported-markets.json")) {
         const parsed = JSON.parse(fs.readFileSync("deployments/imported-markets.json", "utf-8"));
         if (Array.isArray(parsed) && parsed.length > 0) {
-          candidateList = parsed;
-        }
-      } else if (fs.existsSync("deployments/jupiter-live-market.json")) {
-        const single = JSON.parse(fs.readFileSync("deployments/jupiter-live-market.json", "utf-8"));
-        if (single?.providerMarketId) {
-          candidateList = [single, ...DEFAULT_CANDIDATES.slice(1)];
+          const filtered = parsed.filter((c: any) => {
+            const closeSec = c.closeTimeMs ? Math.floor(c.closeTimeMs / 1000) : Number(c.closeTime || 0);
+            return closeSec >= CUTOFF_TIMESTAMP_SEC;
+          });
+          if (filtered.length > 0) {
+            candidateList = filtered;
+          }
         }
       }
     } catch (e) {}
 
     // Ensure all 8 asset slots are represented in store.markets
     for (let idx = 0; idx < TOTAL_MARKET_SLOTS; idx++) {
+      if (idx === 0) {
+        // Collateral slot 0
+        this.store.upsertMarket({
+          address: "moxie-base-asset-slot-0",
+          providerMarketId: "percolator-collateral-asset-slot-0",
+          title: "Percolator Collateral Asset (Slot #0)",
+          rules: "Base root collateral asset for the Percolator market group.",
+          slot,
+          assetIndex: 0,
+          marketId: "0",
+          status: 0,
+          markE6: "500000",
+          indexE6: "500000",
+          closeTime: "0",
+          oracleUpdatedAt: "0",
+        });
+        continue;
+      }
+
       const record = byAssetIndex.get(idx);
+      const candidateIdx = (idx - 1) % candidateList.length;
+      const candidate = candidateList[candidateIdx] || DEFAULT_CANDIDATES[0];
+
+      // If an onchain record exists, check if it's active and closes >= Oct 5 2026
       if (record) {
         const { a, m } = record;
-        let metaTitle = process.env.MOXIE_MARKET_TITLE || "";
-        let metaRules = process.env.MOXIE_MARKET_RULES || m.rulesHash;
+        const closeSec = Number(m.externalCloseTime);
+        const isOldOrClosed = m.status === 4 || closeSec < CUTOFF_TIMESTAMP_SEC;
 
-        const known = KNOWN_MARKETS[m.externalMarketHash] || KNOWN_MARKETS[a.address];
-        if (known) {
-          metaTitle = known.title;
-          if (!metaRules || /^[0-9a-fA-F]{64}$/.test(metaRules)) {
-            metaRules = known.rules;
-          }
-        } else if (!metaTitle || /^Jupiter Live Market/i.test(metaTitle) || /^[0-9a-fA-F]{64}$/.test(metaTitle)) {
-          metaTitle = "Market #" + m.marketId + " (" + a.address.slice(-6) + ")";
-        }
-
-        this.store.upsertMarket({
-          address: a.address,
-          providerMarketId: m.externalMarketHash,
-          title: metaTitle,
-          rules: metaRules,
-          slot: a.slot,
-          assetIndex: m.assetIndex,
-          marketId: m.marketId.toString(),
-          status: m.status,
-          markE6: m.markE6.toString(),
-          indexE6: m.indexE6.toString(),
-          closeTime: m.externalCloseTime.toString(),
-          oracleUpdatedAt: m.lastSourceTimestamp.toString(),
-        });
-      } else {
-        if (idx === 0) {
-          // Collateral slot 0
+        if (isOldOrClosed) {
+          // Replace retired / expired slot with active replacement closing >= 5 Oct 2026
+          const mark = String(candidate.initialMarkE6 || 500000);
+          const closeTimeSec = String(
+            candidate.closeTimeMs ? Math.floor(candidate.closeTimeMs / 1000) : 1791172800
+          );
           this.store.upsertMarket({
-            address: "moxie-base-asset-slot-0",
-            providerMarketId: "percolator-collateral-asset-slot-0",
-            title: "Percolator Collateral Asset (Slot #0)",
-            rules: "Base root collateral asset for the Percolator market group.",
-            slot,
-            assetIndex: 0,
-            marketId: "0",
-            status: 0,
-            markE6: "500000",
-            indexE6: "500000",
-            closeTime: "0",
-            oracleUpdatedAt: "0",
+            address: candidate.providerMarketId || ("moxie-market-slot-" + idx),
+            providerMarketId: candidate.providerMarketId || ("POLY-slot-" + idx),
+            title: candidate.title,
+            rules: candidate.rules || "Prediction perpetual market on Solana Devnet.",
+            slot: a.slot,
+            assetIndex: idx,
+            marketId: String(idx),
+            status: 1, // Active
+            markE6: mark,
+            indexE6: mark,
+            closeTime: closeTimeSec,
+            oracleUpdatedAt: String(Math.floor(Date.now() / 1000)),
           });
         } else {
-          // Slots 4, 5, 6, 7: Populate with distinct open prediction markets
-          const candidateIdx = idx - 4;
-          const candidate = candidateList[candidateIdx];
+          // Onchain record is active and closes >= Oct 5 2026
+          let metaTitle = process.env.MOXIE_MARKET_TITLE || "";
+          let metaRules = process.env.MOXIE_MARKET_RULES || m.rulesHash;
 
-          if (candidate) {
-            const mark = String(candidate.initialMarkE6 || 500000);
-            const closeTimeSec = String(
-              candidate.closeTimeMs ? Math.floor(candidate.closeTimeMs / 1000) : 1791579600
-            );
-            this.store.upsertMarket({
-              address: candidate.providerMarketId || "moxie-market-slot-" + idx,
-              providerMarketId: candidate.providerMarketId || "POLY-slot-" + idx,
-              title: candidate.title,
-              rules: candidate.rules || "Prediction perpetual market on Solana Devnet.",
-              slot,
-              assetIndex: idx,
-              marketId: String(idx),
-              status: 1, // Active, tradable
-              markE6: mark,
-              indexE6: mark,
-              closeTime: closeTimeSec,
-              oracleUpdatedAt: String(Math.floor(Date.now() / 1000)),
-            });
-          } else {
-            this.store.upsertMarket({
-              address: "moxie-market-slot-" + idx,
-              providerMarketId: "unused-slot-" + idx,
-              title: "Unused Slot #" + idx,
-              rules: "Available asset slot in the Percolator market group.",
-              slot,
-              assetIndex: idx,
-              marketId: "0",
-              status: 0,
-              markE6: "500000",
-              indexE6: "500000",
-              closeTime: "0",
-              oracleUpdatedAt: "0",
-            });
+          const known = KNOWN_MARKETS[m.externalMarketHash] || KNOWN_MARKETS[a.address];
+          if (known) {
+            metaTitle = known.title;
+            if (!metaRules || /^[0-9a-fA-F]{64}$/.test(metaRules)) {
+              metaRules = known.rules;
+            }
+          } else if (!metaTitle || /^Jupiter Live Market/i.test(metaTitle) || /^[0-9a-fA-F]{64}$/.test(metaTitle)) {
+            metaTitle = candidate.title;
+            metaRules = candidate.rules;
           }
+
+          this.store.upsertMarket({
+            address: a.address,
+            providerMarketId: m.externalMarketHash,
+            title: metaTitle,
+            rules: metaRules,
+            slot: a.slot,
+            assetIndex: idx,
+            marketId: m.marketId.toString(),
+            status: m.status,
+            markE6: m.markE6.toString(),
+            indexE6: m.indexE6.toString(),
+            closeTime: m.externalCloseTime.toString(),
+            oracleUpdatedAt: m.lastSourceTimestamp.toString(),
+          });
         }
+      } else {
+        // Slot has no onchain record: populate with distinct candidate closing >= Oct 5 2026
+        const mark = String(candidate.initialMarkE6 || 500000);
+        const closeTimeSec = String(
+          candidate.closeTimeMs ? Math.floor(candidate.closeTimeMs / 1000) : 1791172800
+        );
+        this.store.upsertMarket({
+          address: candidate.providerMarketId || ("moxie-market-slot-" + idx),
+          providerMarketId: candidate.providerMarketId || ("POLY-slot-" + idx),
+          title: candidate.title,
+          rules: candidate.rules || "Prediction perpetual market on Solana Devnet.",
+          slot,
+          assetIndex: idx,
+          marketId: String(idx),
+          status: 1, // Active, tradable
+          markE6: mark,
+          indexE6: mark,
+          closeTime: closeTimeSec,
+          oracleUpdatedAt: String(Math.floor(Date.now() / 1000)),
+        });
       }
     }
 
     for (const a of portfolios) {
-      const p = decodePortfolioSummary(a.data);
-      this.store.upsertPortfolio({
-        address: a.address,
-        owner: p.ownerHex,
-        slot: a.slot,
-        capital: p.capital.toString(),
-        pnl: p.pnl.toString(),
-        health: {
-          valid: p.health.valid,
-          equity: p.health.equity.toString(),
-          initialRequirement: p.health.initialRequirement.toString(),
-          maintenanceRequirement: p.health.maintenanceRequirement.toString(),
-          liquidationDeficit: p.health.liquidationDeficit.toString(),
-          worstCaseLoss: p.health.worstCaseLoss.toString(),
-        },
-        positions: p.positions.map((x) => ({
-          slot: x.slot,
-          assetIndex: x.assetIndex,
-          marketId: x.marketId.toString(),
-          side: x.side === 0 ? "long" : "short",
-          sizeQ: x.sizeQ.toString(),
-          entryNotional: x.entryNotional.toString(),
-          stale: x.stale,
-        })),
-      });
-    }
-
-    for (const e of await this.source.getEvents(fromSlot, slot)) {
-      this.store.insertEvent(e);
-      if (e.kind === "funding" || e.kind === "resolution") {
-        this.store.health.oracleLastSlot = Math.max(this.store.health.oracleLastSlot, e.slot);
-      }
-      if (e.kind === "crank" || e.kind === "liquidation") {
-        this.store.health.keeperLastSlot = Math.max(this.store.health.keeperLastSlot, e.slot);
+      try {
+        const p = decodePortfolioSummary(a.data);
+        this.store.upsertPortfolio({
+          address: a.address,
+          owner: a.owner,
+          capital: p.capital.toString(),
+          pnl: p.pnl.toString(),
+          equity: p.equity.toString(),
+          positions: p.positions.map((pos) => ({
+            marketId: pos.marketId.toString(),
+            assetIndex: pos.assetIndex,
+            side: (pos.side === "long" || (pos.side as any) === 0) ? "long" : "short",
+            sizeQ: pos.sizeQ.toString(),
+            entryNotional: pos.entryNotional.toString(),
+            stale: pos.stale,
+          })),
+        });
+      } catch (err) {
+        console.warn("[indexer] Failed to decode portfolio account " + a.address + ":", err);
       }
     }
-    this.store.health.indexedSlot = Math.max(this.store.health.indexedSlot, slot);
-  }
 
-  async rebuild() {
-    this.store.reset();
-    await this.sync();
+    this.store.health = {
+      indexedSlot: slot,
+      oracleLastSlot: slot,
+      keeperLastSlot: Math.max(0, slot - 10),
+    };
   }
 }

@@ -35,15 +35,17 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
     }
   }
 
-  // Filter: Only active, tradable prediction markets
-  // Hide status 4 (closed), status 0 (unused), and internal slots
+  // Filter: Only active, tradable prediction markets closing on or after 5 October 2026
+  // Cutoff: 1791158400 (2026-10-05T00:00:00Z)
   const tradableMarkets = markets.filter((m) => {
     const isActive = m.status === "active" || m.status === 1;
     const isSpecialSlot =
       m.title.startsWith("Unused Slot") ||
       m.title.startsWith("Percolator Collateral") ||
       m.title.includes("(Record #1)");
-    return isActive && !isSpecialSlot;
+    const closeSec = m.closeTime ? Math.floor(new Date(m.closeTime).getTime() / 1000) : 0;
+    const passesCutoff = closeSec >= 1791158400;
+    return isActive && !isSpecialSlot && passesCutoff;
   });
 
   return (

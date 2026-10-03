@@ -36,6 +36,7 @@ export function WalletControl() {
   const [copied, setCopied] = useState(false);
   const [faucetNotice, setFaucetNotice] = useState<string | null>(null);
   const [isFaucetLoading, setIsFaucetLoading] = useState(false);
+  const [isFaucetDisabled, setIsFaucetDisabled] = useState(false);
 
   // Balances
   const [solBalance, setSolBalance] = useState<number | null>(null);
@@ -45,6 +46,15 @@ export function WalletControl() {
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
   const [usdcLoading, setUsdcLoading] = useState(false);
   const [usdcError, setUsdcError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/faucet/usdc")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.configured === false) setIsFaucetDisabled(true);
+      })
+      .catch(() => {});
+  }, []);
 
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const wallet = useUnifiedWallet();
@@ -187,22 +197,27 @@ export function WalletControl() {
       const res = await fetch("/api/faucet/usdc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipient: activeAddress }),
+        body: JSON.stringify({ wallet: activeAddress }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setFaucetNotice("500 Test USDC minted! Refreshing balance...");
+        setFaucetNotice(
+          data.signature
+            ? `500 Test USDC minted! Tx: ${data.signature.slice(0, 8)}...`
+            : "500 Test USDC minted! Refreshing balance..."
+        );
         await refreshAccountState();
-      } else if (res.status === 503 || data?.unconfigured) {
-        setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
       } else {
-        setFaucetNotice(data?.error || "Could not claim test USDC at this time.");
+        if (res.status === 503 || data?.unconfigured) {
+          setIsFaucetDisabled(true);
+        }
+        setFaucetNotice(data?.error || "Could not claim test USDC.");
       }
-    } catch {
-      setFaucetNotice("Test USDC faucet is available via devnet minting or contact us on Discord / GitHub.");
+    } catch (err: any) {
+      setFaucetNotice(err?.message || "Could not claim test USDC.");
     } finally {
       setIsFaucetLoading(false);
-      setTimeout(() => setFaucetNotice(null), 6000);
+      setTimeout(() => setFaucetNotice(null), 8000);
     }
   }
 
@@ -393,7 +408,7 @@ export function WalletControl() {
                     <button
                       type="button"
                       onClick={handleGetTestUsdc}
-                      disabled={isFaucetLoading}
+                      disabled={isFaucetLoading || isFaucetDisabled}
                       style={{
                         marginTop: "10px",
                         display: "flex",
@@ -405,12 +420,13 @@ export function WalletControl() {
                         background: "none",
                         border: "none",
                         padding: 0,
-                        cursor: isFaucetLoading ? "not-allowed" : "pointer",
+                        cursor: (isFaucetLoading || isFaucetDisabled) ? "not-allowed" : "pointer",
+                        opacity: isFaucetDisabled ? 0.5 : 1,
                         textDecoration: "underline",
                       }}
                     >
                       {isFaucetLoading ? <Loader2 size={11} className="animate-spin" /> : <Coins size={11} />}
-                      <span>Get test USDC</span>
+                      <span>Get 500 test USDC</span>
                     </button>
                   </div>
                 </div>

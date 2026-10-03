@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import {
   Connection,
   Keypair,
@@ -13,7 +13,7 @@ import fs from "fs";
 
 export const dynamic = "force-dynamic";
 
-// In-memory rate limiting: 1 request per 20 seconds per pubkey
+// In-memory rate limiting: 1 request per 15 seconds per pubkey
 const rateLimitMap = new Map<string, number>();
 
 function getPayerKeypair(): Keypair | null {
@@ -29,6 +29,7 @@ function getPayerKeypair(): Keypair | null {
   const idPaths = [
     "C:\\Users\\OBINNA\\.config\\solana\\id.json",
     process.env.HOME ? `${process.env.HOME}/.config/solana/id.json` : "",
+    process.env.USERPROFILE ? `${process.env.USERPROFILE}/.config/solana/id.json` : "",
   ].filter(Boolean);
 
   for (const p of idPaths) {
@@ -45,11 +46,21 @@ function getPayerKeypair(): Keypair | null {
   return null;
 }
 
+export async function GET() {
+  const payer = getPayerKeypair();
+  return NextResponse.json({
+    configured: Boolean(payer),
+    mint: DEVNET_DEPLOYMENT.usdcMint,
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { recipient } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const recipient = body.wallet || body.recipient || body.pubkey || (typeof body === "string" ? body : null);
+
     if (!recipient) {
-      return NextResponse.json({ error: "Missing recipient address" }, { status: 400 });
+      return NextResponse.json({ error: "Missing recipient wallet address" }, { status: 400 });
     }
 
     if (!DEVNET_DEPLOYMENT.usdcMint) {
@@ -63,14 +74,14 @@ export async function POST(req: NextRequest) {
     try {
       recipientPubkey = new PublicKey(recipient);
     } catch {
-      return NextResponse.json({ error: "Invalid recipient address" }, { status: 400 });
+      return NextResponse.json({ error: "Invalid recipient wallet address" }, { status: 400 });
     }
 
     const payer = getPayerKeypair();
     if (!payer) {
       return NextResponse.json(
         {
-          error: "Faucet service is in manual mode.",
+          error: "DEVNET_PAYER_SECRET is missing on server",
           unconfigured: true,
         },
         { status: 503 }
@@ -81,8 +92,8 @@ export async function POST(req: NextRequest) {
     const pubkeyStr = recipientPubkey.toBase58();
     const lastRequest = rateLimitMap.get(pubkeyStr) || 0;
     const now = Date.now();
-    if (now - lastRequest < 20_000) {
-      const waitSec = Math.ceil((20_000 - (now - lastRequest)) / 1000);
+    if (now - lastRequest < 15_000) {
+      const waitSec = Math.ceil((15_000 - (now - lastRequest)) / 1000);
       return NextResponse.json(
         { error: `Rate limited. Please wait ${waitSec}s before requesting Test USDC again.` },
         { status: 429 }
@@ -103,19 +114,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "USDC mint account not found on devnet" }, { status: 400 });
     }
 
-    // Mint authority is located at offset 4..36 in SPL Mint layout
+    // SPL Token Mint Layout:
+    // Option<Pubkey> mintAuthority: 4 bytes (1 if present) + 32 bytes pubkey
     let mintAuthorityPubkey: PublicKey | null = null;
-    if (mintInfo.data.length >= 36 && mintInfo.data[0] === 1) {
+    const mintAuthOption = mintInfo.data.readUInt32LE(0);
+    if (mintAuthOption === 1 && mintInfo.data.length >= 36) {
       mintAuthorityPubkey = new PublicKey(mintInfo.data.subarray(4, 36));
     }
 
-    if (
-      mintAuthorityPubkey &&
-      !mintAuthorityPubkey.equals(payer.publicKey) &&
-      payer.publicKey.toBase58() !== DEVNET_DEPLOYMENT.marketAuthority
-    ) {
+    if (!mintAuthorityPubkey || !mintAuthorityPubkey.equals(payer.publicKey)) {
       return NextResponse.json(
-        { error: "payer cannot mint" },
+        { error: "Payer is not the mint authority for USDC mint" },
         { status: 403 }
       );
     }
@@ -146,7 +155,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Mint 500 Test USDC (SPL Token MintTo: tag 7, 500_000_000 atoms)
+    // 2. Mint 500 Test USDC (SPL Token MintTo: tag 7, 500_000_000 atoms for 6 decimals)
     const amountAtoms = 500_000_000n;
     const mintData = Buffer.alloc(9);
     mintData.writeUInt8(7, 0);
@@ -182,7 +191,7 @@ export async function POST(req: NextRequest) {
     console.error("USDC Faucet error:", err);
     const msg = String(err?.message || "");
     if (msg.toLowerCase().includes("owner does not match") || msg.toLowerCase().includes("custom program error: 0x4")) {
-      return NextResponse.json({ error: "payer cannot mint" }, { status: 403 });
+      return NextResponse.json({ error: "Payer is not the mint authority for USDC mint" }, { status: 403 });
     }
     return NextResponse.json(
       { error: err.message || "Failed to mint Test USDC" },
