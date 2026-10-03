@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Markets | Moxie",
-  description: "Browse live prediction markets. Buy Yes or No with instant settlement on Solana devnet.",
+  description: "Browse live prediction markets. Trade Long or Short with instant settlement on Solana devnet.",
 };
 
 export default async function MarketsPage() {
@@ -21,7 +21,7 @@ export default async function MarketsPage() {
             Prediction Markets
           </h1>
           <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", margin: 0, maxWidth: "640px", lineHeight: 1.5 }}>
-            Browse active prediction markets. Buy YES or NO using test USDC with instant settlement on Solana devnet.
+            Browse active prediction markets. Trade Long or Short using test USDC with instant settlement on Solana devnet.
           </p>
         </header>
 

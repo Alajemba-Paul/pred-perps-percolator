@@ -37,7 +37,7 @@ export default function HomePage() {
         </h1>
 
         <p style={{ fontSize: "clamp(16px, 2vw, 19px)", color: "rgba(255,255,255,0.7)", maxWidth: "620px", margin: "0 auto 36px", lineHeight: 1.6 }}>
-          Buy YES or NO on sports, esports, and prediction markets priced in cents. Fully collateralized and settled on Solana.
+          Trade Long or Short on sports, esports, and prediction markets priced in cents. Fully collateralized and settled on Solana.
         </p>
 
         <div>
