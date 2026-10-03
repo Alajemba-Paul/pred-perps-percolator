@@ -30,13 +30,13 @@ const STORY_STEPS = [
   },
   {
     step: 2,
-    title: "2. Our price is the chance YES happens, in cents",
+    title: "2. Price reflects probability in cents (Long / Short)",
     tagline: "Probability Pricing",
     icon: Coins,
     color: "#60a5fa",
     description:
-      "Instead of confusing multipliers, the price reflects the live market probability. If YES is trading at 56.5¢, the market estimates a 56.5% probability that the event will happen. NO is priced at the exact opposite (43.5¢).",
-    example: "YES at 56.5¢ = 56.5% chance • NO at 43.5¢ = 43.5% chance.",
+      "Instead of confusing multipliers, the price reflects the live market probability. If Long is trading at 56.5¢, the market estimates a 56.5% probability that the event will happen. Short is priced at the exact opposite (43.5¢).",
+    example: "Long at 56.5¢ = 56.5% chance · Short at 43.5¢ = 43.5% chance.",
   },
   {
     step: 3,
@@ -45,8 +45,8 @@ const STORY_STEPS = [
     icon: ShieldCheck,
     color: "#c7ff4a",
     description:
-      "When you choose BUY YES or BUY NO, you sign a single Solana Devnet transaction with your wallet. Your trade is matched against liquidity with 100% margin backing, meaning there is zero risk of systemic bad debt.",
-    example: "You deposit $50 test USDC and receive ~88 YES contracts at 56.5¢.",
+      "When you choose BUY LONG or BUY SHORT, you sign a single Solana Devnet transaction with your wallet. Your trade is matched against liquidity with 100% margin backing, meaning there is zero risk of systemic bad debt.",
+    example: "You deposit $50 test USDC and receive ~88 Long contracts at 56.5¢.",
   },
   {
     step: 4,
@@ -60,12 +60,12 @@ const STORY_STEPS = [
   },
   {
     step: 5,
-    title: "5. When the event ends, YES goes to $1 or $0",
+    title: "5. When the event ends, contracts settle to $1 or $0",
     tagline: "Terminal Settlement",
     icon: CheckCircle2,
     color: "#f472b6",
     description:
-      "Once the real-world match or event concludes, the oracle enters the official outcome. If YES was correct, each YES contract pays out $1.00 and NO goes to $0.00. You can withdraw your settled USDC back to your wallet anytime.",
+      "Once the real-world match or event concludes, the oracle enters the official outcome. If the event outcome occurs, Long contracts pay out $1.00 and Short goes to $0.00; otherwise Short pays $1.00. You can withdraw your settled USDC back to your wallet anytime.",
     example: "Winning contracts settle at $1.00 full value; losing contracts settle at $0.00.",
   },
 ];

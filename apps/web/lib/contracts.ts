@@ -1,4 +1,3 @@
-import { Buffer } from "buffer";
 if (typeof window !== "undefined" && !(window as any).Buffer) {
   (window as any).Buffer = Buffer;
 }
@@ -38,10 +37,10 @@ const u128 = (v: DataView, o: number, x: bigint) => { if (x < 0n) throw new Rang
 
 export const buildCreatePortfolioData = (): Uint8Array => Uint8Array.of(1);
 
-export function buildDepositData(a: bigint, bOpt?: bigint, cOpt?: bigint): Uint8Array {
-  const portfolioId = cOpt !== undefined ? a : 0n;
-  const sequence = cOpt !== undefined ? (bOpt ?? 0n) : 0n;
-  const amount = cOpt !== undefined ? cOpt : a;
+export function buildDepositData(portfolioIdOrAmount: bigint, sequenceOpt?: bigint, amountOpt?: bigint): Uint8Array {
+  const portfolioId = amountOpt !== undefined ? portfolioIdOrAmount : 0n;
+  const sequence = amountOpt !== undefined ? (sequenceOpt ?? 0n) : 0n;
+  const amount = amountOpt !== undefined ? amountOpt : portfolioIdOrAmount;
   const b = out(3, 33), v = view(b);
   u64(v, 1, portfolioId);
   u64(v, 9, sequence);
@@ -71,15 +70,18 @@ export type TradeRequest = {
   backingFeeCapBps?: number;
 };
 
+// Exact layout matching vendor/percolator-prog @ 4b974f1 (85 bytes):
+// Tag (1) + traderPortfolioId (8) + traderPositionEpoch (8) + lpPortfolioId (8) + lpPositionEpoch (8) + lpMatcherSequence (8)
+// + assetIndex (2) + marketId (8) + sizeQ (16) + feeBps (8) + limitPrice (8) + backingFeeCapBps (2) = 85 bytes
 export function buildTradeCpiData(r: TradeRequest): Uint8Array {
   if (!r.sizeQ) throw new Error("trade size cannot be zero");
-  const b = out(10, 100), v = view(b);
+  const b = out(10, 85), v = view(b);
   let o = 1;
   const traderPortfolioId = r.traderPortfolioId ?? 0n;
   const traderPositionEpoch = r.traderPositionEpoch ?? 0n;
-  const lpPortfolioId = r.lpPortfolioId ?? 0n;
-  const lpPositionEpoch = r.lpPositionEpoch ?? 0n;
-  const lpMatcherSequence = r.lpMatcherSequence ?? 0n;
+  const lpPortfolioId = r.lpPortfolioId ?? 2n;
+  const lpPositionEpoch = r.lpPositionEpoch ?? 2n;
+  const lpMatcherSequence = r.lpMatcherSequence ?? 2n;
   const marketId = r.marketId ?? 2n;
   const feeBps = r.feeBps ?? 30n;
 
@@ -92,6 +94,35 @@ export function buildTradeCpiData(r: TradeRequest): Uint8Array {
   i128(v, o, r.sizeQ); o += 16;
   u64(v, o, feeBps); o += 8;
   u64(v, o, r.limitPriceE6); o += 8;
+  u16(v, o, r.backingFeeCapBps ?? 0);
+  return b;
+}
+
+// Exact layout matching vendor/percolator-prog @ 4b974f1 (77 bytes):
+export function buildTradeNoCpiData(r: {
+  accountAPortfolioId: bigint;
+  accountAPositionEpoch: bigint;
+  accountBPortfolioId: bigint;
+  accountBPositionEpoch: bigint;
+  assetIndex: number;
+  marketId: bigint;
+  sizeQ: bigint;
+  execPrice: bigint;
+  feeBps: bigint;
+  backingFeeCapBps?: number;
+}): Uint8Array {
+  if (!r.sizeQ) throw new Error("trade size cannot be zero");
+  const b = out(6, 77), v = view(b);
+  let o = 1;
+  for (const x of [r.accountAPortfolioId, r.accountAPositionEpoch, r.accountBPortfolioId, r.accountBPositionEpoch]) {
+    u64(v, o, x);
+    o += 8;
+  }
+  u16(v, o, r.assetIndex); o += 2;
+  u64(v, o, r.marketId); o += 8;
+  i128(v, o, r.sizeQ); o += 16;
+  u64(v, o, r.execPrice); o += 8;
+  u64(v, o, r.feeBps); o += 8;
   u16(v, o, r.backingFeeCapBps ?? 0);
   return b;
 }
@@ -138,6 +169,7 @@ export type PortfolioPosition = {
 
 export type DecodedPortfolio = {
   portfolioId: bigint;
+  positionEpoch: bigint;
   sequence: bigint;
   capital: bigint;
   pnl: bigint;
@@ -180,6 +212,10 @@ export function decodePortfolioSummary(b: Uint8Array): DecodedPortfolio {
     }
   }
 
+  // PortfolioMatcherConfigV16 control is at offset 9531. position_epoch is bits 1..49:
+  const control = v.getBigUint64(9531, true);
+  const positionEpoch = (control >> 1n) & ((1n << 49n) - 1n);
+
   return {
     capital: readU128(v, capitalOffset),
     pnl: readI128(v, capitalOffset + 16),
@@ -188,6 +224,7 @@ export function decodePortfolioSummary(b: Uint8Array): DecodedPortfolio {
     maintenanceRequirement: readU128(v, healthAt + 32),
     liquidationDeficit: readU128(v, healthAt + 48),
     valid: b[healthAt + 120] === 1,
+    positionEpoch,
     portfolioId: v.getBigUint64(9539, true),
     sequence: v.getBigUint64(9547, true),
     positions,
@@ -209,4 +246,26 @@ export function getUserAta(userPublicKey: PublicKey, mintPublicKey: PublicKey): 
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
   return ata;
+}
+
+export function createAssociatedTokenAccountInstruction(
+  payer: PublicKey,
+  associatedToken: PublicKey,
+  owner: PublicKey,
+  mint: PublicKey,
+  programId = TOKEN_PROGRAM_ID,
+  associatedTokenProgramId = ASSOCIATED_TOKEN_PROGRAM_ID
+): TransactionInstruction {
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: associatedToken, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: programId, isSigner: false, isWritable: false },
+    ],
+    programId: associatedTokenProgramId,
+    data: Buffer.alloc(0),
+  });
 }

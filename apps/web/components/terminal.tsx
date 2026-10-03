@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
@@ -32,7 +32,7 @@ if (typeof window !== "undefined" && !(window as any).Buffer) {
 }
 
 export function Terminal({ market }: { market: Market }) {
-  const [side, setSide] = useState<"YES" | "NO">("YES");
+  const [side, setSide] = useState<"Long" | "Short">("Long");
   const [sizeUsdc, setSizeUsdc] = useState<string>("50");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [txSignature, setTxSignature] = useState<string | null>(null);
@@ -71,8 +71,8 @@ export function Terminal({ market }: { market: Market }) {
       const res = await fetch(`/api/account-state?address=${activePubkey.toBase58()}`, { cache: "no-store" });
       if (res.ok) {
         const state = await res.json();
-        setSolBalance(state.sol);
-        setUsdcBalance(state.usdc);
+        setSolBalance(state.sol !== null && state.sol !== undefined ? state.sol : null);
+        setUsdcBalance(state.usdc !== null && state.usdc !== undefined ? state.usdc : null);
         setHasPortfolio(Boolean(state.hasPortfolio));
 
         if (state.portfolioData?.positions) {
@@ -141,7 +141,7 @@ export function Terminal({ market }: { market: Market }) {
         setPosition(null);
       }
     } catch (e) {
-      console.warn("Terminal account poll:", e);
+      console.warn("Account refresh error:", e);
     }
   }, [activePubkey, connection, market.assetIndex, market.marketId]);
 
@@ -152,11 +152,12 @@ export function Terminal({ market }: { market: Market }) {
   }, [refreshAccountAndPosition]);
 
   // Pricing calculations
-  const yesMark = market.currentPrice;
-  const noMark = Math.max(0, 1 - yesMark);
-  const yesCents = Math.round(yesMark * 100);
-  const noCents = Math.max(0, 100 - yesCents);
-  const activeMark = side === "YES" ? yesMark : noMark;
+  const longMark = market.currentPrice;
+  const shortMark = Math.max(0, 1 - longMark);
+  const longCents = Math.round(longMark * 100);
+  const shortCents = Math.max(0, 100 - longCents);
+  const activeMark = side === "Long" ? longMark : shortMark;
+  const activeCents = side === "Long" ? longCents : shortCents;
   const numSizeUsdc = Math.max(0, parseFloat(sizeUsdc) || 0);
 
   const estimatedContracts = activeMark > 0 ? numSizeUsdc / activeMark : 0;
@@ -197,19 +198,58 @@ export function Terminal({ market }: { market: Market }) {
       const marketAccount = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
       const userPortfolioPubkey = await deriveUserPortfolioAddress(activePubkey);
       const lpPortfolioPubkey = new PublicKey(DEVNET_DEPLOYMENT.lpPortfolio);
+      const matcherProgramId = new PublicKey(DEVNET_DEPLOYMENT.matcherProgramId);
       const matcherContextPubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherContext);
       const matcherDelegatePubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherDelegate);
 
+      // Read user portfolio ID and position epoch directly from chain
+      const userAccInfo = await connection.getAccountInfo(userPortfolioPubkey, "confirmed");
+      if (!userAccInfo || userAccInfo.data.length < DEVNET_DEPLOYMENT.portfolioAccountLen) {
+        setTradeError("Trading account not found onchain. Please create your trading account on the Portfolio page first.");
+        return;
+      }
+      const userDecoded = decodePortfolioSummary(userAccInfo.data);
+      const traderPortfolioId = userDecoded.portfolioId;
+      const traderPositionEpoch = userDecoded.positionEpoch;
+
+      // Read LP portfolio parameters directly from chain
+      let lpPortfolioId = 2n;
+      let lpPositionEpoch = 2n;
+      let lpMatcherSequence = 2n;
+      try {
+        const lpAccInfo = await connection.getAccountInfo(lpPortfolioPubkey, "confirmed");
+        if (lpAccInfo && lpAccInfo.data.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
+          const lpDecoded = decodePortfolioSummary(lpAccInfo.data);
+          lpPortfolioId = lpDecoded.portfolioId;
+          lpPositionEpoch = lpDecoded.positionEpoch;
+          lpMatcherSequence = lpDecoded.sequence;
+        }
+      } catch (e) {
+        console.warn("Using default LP portfolio parameters:", e);
+      }
+
       const sizeMicroUnits = BigInt(Math.floor(estimatedContracts * 1_000_000));
-      const signedSizeQ = side === "YES" ? sizeMicroUnits : -sizeMicroUnits;
-      const limitPriceE6 = BigInt(Math.floor(activeMark * 1_000_000));
+      // Long = positive size, short = negative size
+      const signedSizeQ = side === "Long" ? sizeMicroUnits : -sizeMicroUnits;
+      const limitPriceE6 = BigInt(Math.round(activeMark * 1_000_000));
+      const assetIndex = Number(market.assetIndex) || 1;
+      const marketId = BigInt(market.marketId || "2");
 
       const tradeData = buildTradeCpiData({
-        assetIndex: Number(market.assetIndex) || 1,
+        traderPortfolioId,
+        traderPositionEpoch,
+        lpPortfolioId,
+        lpPositionEpoch,
+        lpMatcherSequence,
+        assetIndex,
+        marketId,
         sizeQ: signedSizeQ,
         limitPriceE6,
-        marketId: BigInt(market.marketId || "2"),
+        feeBps: 30n,
+        backingFeeCapBps: 0,
       });
+
+      console.log("Instruction: TradeCpi, byte length:", tradeData.length);
 
       const tx = new Transaction();
       tx.add(
@@ -220,6 +260,7 @@ export function Terminal({ market }: { market: Market }) {
             { pubkey: marketAccount, isSigner: false, isWritable: true },
             { pubkey: userPortfolioPubkey, isSigner: false, isWritable: true },
             { pubkey: lpPortfolioPubkey, isSigner: false, isWritable: true },
+            { pubkey: matcherProgramId, isSigner: false, isWritable: false },
             { pubkey: matcherContextPubkey, isSigner: false, isWritable: true },
             { pubkey: matcherDelegatePubkey, isSigner: false, isWritable: false },
           ],
@@ -257,12 +298,12 @@ export function Terminal({ market }: { market: Market }) {
 
           <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
             <div style={{ textAlign: "right" }}>
-              <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>YES Price</small>
-              <strong style={{ fontSize: "20px", color: "#c7ff4a" }}>{yesCents}¢</strong>
+              <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Long Price</small>
+              <strong style={{ fontSize: "20px", color: "#c7ff4a" }}>{longCents}¢</strong>
             </div>
             <div style={{ textAlign: "right" }}>
-              <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>NO Price</small>
-              <strong style={{ fontSize: "20px", color: "#ff8474" }}>{noCents}¢</strong>
+              <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Short Price</small>
+              <strong style={{ fontSize: "20px", color: "#ff8474" }}>{shortCents}¢</strong>
             </div>
           </div>
         </div>
@@ -280,11 +321,11 @@ export function Terminal({ market }: { market: Market }) {
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
           <h2 style={{ fontSize: "16px", fontWeight: 600, color: "#fff", margin: 0 }}>Place Order</h2>
 
-          {/* YES / NO Selector */}
+          {/* Long / Short Selector */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <button
               type="button"
-              onClick={() => setSide("YES")}
+              onClick={() => setSide("Long")}
               style={{
                 padding: "12px",
                 borderRadius: "6px",
@@ -292,16 +333,16 @@ export function Terminal({ market }: { market: Market }) {
                 fontWeight: 700,
                 fontSize: "14px",
                 cursor: "pointer",
-                background: side === "YES" ? "#c7ff4a" : "rgba(255,255,255,0.06)",
-                color: side === "YES" ? "#000" : "rgba(255,255,255,0.7)",
+                background: side === "Long" ? "#c7ff4a" : "rgba(255,255,255,0.06)",
+                color: side === "Long" ? "#000" : "rgba(255,255,255,0.7)",
               }}
             >
-              Buy YES ({yesCents}¢)
+              Buy Long ({longCents}¢)
             </button>
 
             <button
               type="button"
-              onClick={() => setSide("NO")}
+              onClick={() => setSide("Short")}
               style={{
                 padding: "12px",
                 borderRadius: "6px",
@@ -309,12 +350,15 @@ export function Terminal({ market }: { market: Market }) {
                 fontWeight: 700,
                 fontSize: "14px",
                 cursor: "pointer",
-                background: side === "NO" ? "#ff8474" : "rgba(255,255,255,0.06)",
-                color: side === "NO" ? "#000" : "rgba(255,255,255,0.7)",
+                background: side === "Short" ? "#ff8474" : "rgba(255,255,255,0.06)",
+                color: side === "Short" ? "#000" : "rgba(255,255,255,0.7)",
               }}
             >
-              Buy NO ({noCents}¢)
+              Buy Short ({shortCents}¢)
             </button>
+          </div>
+          <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "-6px" }}>
+            Long = price goes up (outcome happens) · Short = price goes down
           </div>
 
           {/* Size Input */}
@@ -376,11 +420,11 @@ export function Terminal({ market }: { market: Market }) {
           <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: "6px", padding: "12px 14px", display: "flex", flexDirection: "column", gap: "8px", fontSize: "12px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", color: "rgba(255,255,255,0.6)" }}>
               <span>Outcome</span>
-              <strong style={{ color: side === "YES" ? "#c7ff4a" : "#ff8474" }}>Buy {side}</strong>
+              <strong style={{ color: side === "Long" ? "#c7ff4a" : "#ff8474" }}>Buy {side}</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: "rgba(255,255,255,0.6)" }}>
               <span>Price</span>
-              <span style={{ color: "#fff" }}>{side === "YES" ? yesCents : noCents}¢</span>
+              <span style={{ color: "#fff" }}>{activeCents}¢</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: "rgba(255,255,255,0.6)" }}>
               <span>Contracts</span>
@@ -510,7 +554,7 @@ export function Terminal({ market }: { market: Market }) {
                     color: position.side === "long" ? "#c7ff4a" : "#ff8474",
                   }}
                 >
-                  {position.side === "long" ? "YES (Long)" : "NO (Short)"}
+                  {position.side === "long" ? "Long" : "Short"}
                 </span>
               </div>
 
@@ -548,11 +592,11 @@ export function Terminal({ market }: { market: Market }) {
                 gap: "6px",
                 color: "#c7ff4a",
                 fontSize: "13px",
-                textDecoration: "underline",
+                textDecoration: "none",
               }}
             >
               <span>View full portfolio</span>
-              <ArrowRight size={13} />
+              <ArrowRight size={14} />
             </Link>
           </div>
         </div>

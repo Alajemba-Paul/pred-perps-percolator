@@ -66,6 +66,65 @@ const defaultUnifiedWallet: UnifiedWallet = {
 
 const UnifiedWalletContext = createContext<UnifiedWallet>(defaultUnifiedWallet);
 
+
+// Helper to extract logs from transaction errors (SendTransactionError, simulation, etc.)
+async function extractTransactionLogs(err: any, connection: Connection, signedTx?: Transaction): Promise<string[]> {
+  if (Array.isArray(err?.logs) && err.logs.length > 0) {
+    return err.logs;
+  }
+  if (typeof err?.getLogs === "function") {
+    try {
+      const logs = await err.getLogs(connection);
+      if (Array.isArray(logs) && logs.length > 0) return logs;
+    } catch {}
+  }
+  if (signedTx) {
+    try {
+      const sim = await connection.simulateTransaction(signedTx, undefined, true);
+      if (Array.isArray(sim.value.logs) && sim.value.logs.length > 0) {
+        return sim.value.logs;
+      }
+    } catch {}
+  }
+  return [];
+}
+
+function parseErrorSummary(err: any, logs: string[]): string {
+  if (logs.length > 0) {
+    const error0xd = logs.find(
+      (l) => l.includes("custom program error: 0xd") || l.includes("Custom: 13") || l.includes("0xd")
+    );
+    if (error0xd) {
+      return "Custom program error: 0xd (InvalidTokenProgram: verify SPL Token Program account)";
+    }
+    const prioritized = [...logs].reverse().find(
+      (l) =>
+        l.includes("Program log:") ||
+        l.includes("Program failed") ||
+        l.includes("custom program error") ||
+        l.includes("Error:") ||
+        l.includes("insufficient funds") ||
+        l.includes("already in use")
+    );
+    if (prioritized) {
+      return prioritized
+        .replace(/^.*?Program log:s*/i, "")
+        .replace(/^Transaction simulation failed:s*/i, "")
+        .replace(/^Error processing Instruction d+:s*/i, "")
+        .trim();
+    }
+  }
+
+  const rawMsg = err?.message || String(err);
+  if (/blockhash not found/i.test(rawMsg)) {
+    return "Simulation failed: Blockhash not found. Transaction expired before confirmation. Please try again.";
+  }
+  return rawMsg
+    .replace(/^Transaction simulation failed:s*/i, "")
+    .replace(/^Error processing Instruction d+:s*/i, "")
+    .trim() || "Transaction failed on Solana Devnet.";
+}
+
 function UnifiedWalletBridge({ children }: { children: ReactNode }) {
   const { ready, authenticated, login, logout } = usePrivy();
   const { wallets } = usePrivySolanaWallets();
@@ -124,16 +183,17 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
     }
   }, [activeAddress]);
 
-  // Sign Transaction on active wallet
+  // Sign Transaction on active wallet - always fetch fresh blockhash immediately before signing
   const signTransaction = useCallback(
     async (tx: Transaction, connection?: Connection): Promise<Transaction> => {
+      if (connection) {
+        const latest = await connection.getLatestBlockhash("confirmed");
+        tx.recentBlockhash = latest.blockhash;
+      }
+
       if (activeWalletType === "privy" && wallets[0]) {
         const payer = new PublicKey(wallets[0].address);
         tx.feePayer = payer;
-        if (!tx.recentBlockhash && connection) {
-          const latest = await connection.getLatestBlockhash("confirmed");
-          tx.recentBlockhash = latest.blockhash;
-        }
         const serialized = tx.serialize({
           requireAllSignatures: false,
           verifySignatures: false,
@@ -158,10 +218,6 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
           throw new Error("Reconnect wallet");
         }
         tx.feePayer = phantom.publicKey;
-        if (!tx.recentBlockhash && connection) {
-          const latest = await connection.getLatestBlockhash("confirmed");
-          tx.recentBlockhash = latest.blockhash;
-        }
         return await phantom.signTransaction(tx);
       }
 
@@ -170,57 +226,61 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
     [activeWalletType, wallets, privySignTransaction]
   );
 
-  // Sign and broadcast with one-line program log extraction on error
+  // Sign and broadcast with fresh blockhash, retry once on blockhash not found, and show getLogs()
   const signAndSendTransaction = useCallback(
     async (tx: Transaction, connection: Connection): Promise<string> => {
       if (!activePubkey) {
         throw new Error("Reconnect wallet");
       }
 
-      tx.feePayer = activePubkey;
-      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-      tx.recentBlockhash = latestBlockhash.blockhash;
+      let attempt = 0;
+      while (attempt < 2) {
+        attempt++;
+        tx.feePayer = activePubkey;
+        const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+        tx.recentBlockhash = latestBlockhash.blockhash;
 
-      const signedTx = await signTransaction(tx, connection);
-      const rawTx = signedTx.serialize();
-
-      try {
-        const sig = await connection.sendRawTransaction(rawTx, {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
-        });
-        await connection.confirmTransaction(
-          {
-            signature: sig,
-            blockhash: latestBlockhash.blockhash,
-            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-          },
-          "confirmed"
-        );
-        return sig;
-      } catch (err: any) {
-        console.error("sendRawTransaction error:", err);
-        let logSummary = "";
-        if (Array.isArray(err?.logs) && err.logs.length > 0) {
-          const errorLine = [...err.logs].reverse().find(
-            (l: string) =>
-              l.includes("Custom program error") ||
-              l.includes("Program failed to complete") ||
-              l.includes("Error:") ||
-              l.includes("insufficient funds") ||
-              l.includes("already in use")
-          );
-          logSummary = errorLine || err.logs[err.logs.length - 1];
-        } else if (typeof err?.message === "string") {
-          logSummary = err.message;
+        let signedTx: Transaction;
+        try {
+          signedTx = await signTransaction(tx, connection);
+        } catch (signErr: any) {
+          console.error("Sign transaction error:", signErr);
+          throw signErr;
         }
-        const clean = logSummary
-          .replace(/^.*?Program log:s*/i, "")
-          .replace(/Transaction simulation failed:s*/i, "")
-          .replace(/^Error processing Instruction d+:s*/i, "")
-          .trim();
-        throw new Error(clean || err?.message || "Transaction failed on Solana Devnet.");
+
+        const rawTx = signedTx.serialize();
+
+        try {
+          const sig = await connection.sendRawTransaction(rawTx, {
+            skipPreflight: false,
+            preflightCommitment: "confirmed",
+          });
+          await connection.confirmTransaction(
+            {
+              signature: sig,
+              blockhash: latestBlockhash.blockhash,
+              lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+            },
+            "confirmed"
+          );
+          return sig;
+        } catch (err: any) {
+          console.error("sendRawTransaction error (attempt " + attempt + "):", err);
+          const rawMsg = err?.message || String(err);
+          const isBlockhashError = /blockhash not found/i.test(rawMsg);
+
+          if (isBlockhashError && attempt === 1) {
+            console.warn("Blockhash not found. Retrying once with fresh blockhash...");
+            continue;
+          }
+
+          const logs = await extractTransactionLogs(err, connection, signedTx);
+          const cleanMessage = parseErrorSummary(err, logs);
+          throw new Error(cleanMessage);
+        }
       }
+
+      throw new Error("Transaction failed: Blockhash expired. Please try again.");
     },
     [activePubkey, signTransaction]
   );

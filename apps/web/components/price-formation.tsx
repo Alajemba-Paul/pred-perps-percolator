@@ -13,8 +13,8 @@ export function PriceFormation() {
   return (
     <div className="formation-demo">
       <div className="formation-visual">
-        <div className="axis-label no-label">0 · NO</div>
-        <div className="axis-label yes-label">YES · 1</div>
+        <div className="axis-label no-label">0 · SHORT</div>
+        <div className="axis-label yes-label">LONG · 1</div>
         <div className="formation-track">
           <span className="index-pin" style={{ left: "45%" }}><i />INDEX 45.0</span>
           <span className="mark-pin" style={{ left: `${values.mark}%` }}><i />MARK {values.mark.toFixed(1)}</span>

@@ -86,8 +86,8 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
       <div className="market-cards" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         {tradableMarkets.length > 0 ? (
           tradableMarkets.map((market) => {
-            const yesCents = Math.round(market.currentPrice * 100);
-            const noCents = Math.max(0, 100 - yesCents);
+            const longCents = Math.round(market.currentPrice * 100);
+            const shortCents = Math.max(0, 100 - longCents);
             const formattedClose = market.closeTime
               ? new Date(market.closeTime).toLocaleDateString(undefined, {
                   month: "short",
@@ -156,17 +156,15 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                   }}
                 >
                   <div>
-                    <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>YES Price</small>
+                    <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>Long Price</small>
                     <strong style={{ fontSize: "15px", color: "#c7ff4a" }}>
-                      {yesCents}¢
-                    </strong>
+                      {longCents}¢</strong>
                   </div>
 
                   <div>
-                    <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>NO Price</small>
+                    <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>Short Price</small>
                     <strong style={{ fontSize: "15px", color: "#ff8474" }}>
-                      {noCents}¢
-                    </strong>
+                      {shortCents}¢</strong>
                   </div>
 
                   <div>

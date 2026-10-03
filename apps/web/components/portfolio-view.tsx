@@ -23,6 +23,9 @@ import {
   decodePortfolioSummary,
   buildDepositData,
   buildCreatePortfolioData,
+  createAssociatedTokenAccountInstruction,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@/lib/contracts";
 import { useUnifiedWallet } from "./wallet-providers";
 import {
@@ -294,6 +297,17 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       setActionError("Reconnect wallet");
       return;
     }
+
+    if (!hasPortfolio || !portfolioData || !portfolioData.portfolioId || portfolioData.portfolioId === 0n) {
+      setActionError("Trading account not initialized. Please click 'Create trading account' first.");
+      return;
+    }
+
+    if ((usdcBalance ?? 0) < 100) {
+      setActionError("Insufficient test USDC balance. Click 'Get 500 test USDC' above first.");
+      return;
+    }
+
     setIsActionLoading(true);
     setActionError(null);
     setActionSuccess(null);
@@ -303,14 +317,40 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       const marketAccount = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
       const portfolioPubkey = await deriveUserPortfolioAddress(activePubkey);
       const mintPubkey = new PublicKey(DEVNET_DEPLOYMENT.usdcMint);
-      const vaultAuthority = new PublicKey(DEVNET_DEPLOYMENT.vaultAuthority);
       const collateralVault = new PublicKey(DEVNET_DEPLOYMENT.collateralVault);
       const userAta = getUserAta(activePubkey, mintPubkey);
 
-      const depositAmountAtoms = 100_000_000n; // 100 USDC
-      const depositData = buildDepositData(depositAmountAtoms);
+      // Verify onchain portfolio state
+      const pAcc = await connection.getAccountInfo(portfolioPubkey, "confirmed");
+      if (!pAcc || pAcc.data.length < DEVNET_DEPLOYMENT.portfolioAccountLen) {
+        setActionError("Trading account not found onchain. Please click 'Create trading account' first.");
+        return;
+      }
+      const decoded = decodePortfolioSummary(pAcc.data);
+      const portfolioId = decoded.portfolioId;
+      const sequence = decoded.sequence;
 
       const tx = new Transaction();
+
+      // Check if user ATA exists; if not, create it
+      const userAtaInfo = await connection.getAccountInfo(userAta, "confirmed");
+      if (!userAtaInfo) {
+        tx.add(
+          createAssociatedTokenAccountInstruction(
+            activePubkey,
+            userAta,
+            activePubkey,
+            mintPubkey,
+            TOKEN_PROGRAM_ID,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+          )
+        );
+      }
+
+      const depositAmountAtoms = 100_000_000n; // 100 USDC in raw 6-decimal units
+      const depositData = buildDepositData(portfolioId, sequence, depositAmountAtoms);
+      console.log("Instruction: Deposit, byte length:", depositData.length);
+
       tx.add(
         new TransactionInstruction({
           programId: percolatorProgramId,
@@ -320,8 +360,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
             { pubkey: portfolioPubkey, isSigner: false, isWritable: true },
             { pubkey: userAta, isSigner: false, isWritable: true },
             { pubkey: collateralVault, isSigner: false, isWritable: true },
-            { pubkey: vaultAuthority, isSigner: false, isWritable: false },
-            { pubkey: new PublicKey(DEVNET_DEPLOYMENT.tokenProgramId), isSigner: false, isWritable: false },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
           ],
           data: Buffer.from(depositData),
         })
@@ -331,6 +370,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       setActionSuccess(`Deposited $100 Margin! Tx: ${sig.slice(0, 8)}...`);
       await refreshPortfolio();
     } catch (err: any) {
+      console.error("Deposit margin error:", err);
       const msg = err?.message || String(err);
       setActionError(msg.includes("Reconnect") ? "Reconnect wallet" : msg);
     } finally {
@@ -480,7 +520,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
           <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>ACCOUNT EQUITY</small>
           <strong style={{ fontSize: "20px", color: "#c7ff4a" }}>${equityUsdc.toFixed(2)}</strong>
-          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Deposited � Profit</span>
+          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Deposited + PnL</span>
         </div>
 
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
@@ -614,7 +654,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
                             color: pos.side === "long" ? "#c7ff4a" : "#ff8474",
                           }}
                         >
-                          {pos.side === "long" ? "YES" : "NO"}
+                          {pos.side === "long" ? "Long" : "Short"}
                         </span>
                       </td>
                       <td style={{ padding: "12px", color: "#fff" }}>{sizeContracts.toFixed(1)}</td>

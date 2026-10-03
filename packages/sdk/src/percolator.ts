@@ -22,7 +22,7 @@ export function buildWithdrawData(portfolioId: bigint, sequence: bigint, amount:
 }
 export function buildTradeCpiData(r: TradeRequest): Uint8Array {
   if(!r.sizeQ) throw new Error("trade size cannot be zero");
-  const b=out(10,100),v=view(b); let o=1;
+  const b=out(10,85),v=view(b); let o=1;
   for(const x of [r.traderPortfolioId,r.traderPositionEpoch,r.lpPortfolioId,r.lpPositionEpoch,r.lpMatcherSequence]){u64(v,o,x);o+=8}
   u16(v,o,r.assetIndex);o+=2;u64(v,o,r.marketId);o+=8;i128(v,o,r.sizeQ);o+=16;u64(v,o,r.feeBps);o+=8;u64(v,o,r.limitPriceE6);o+=8;u16(v,o,r.backingFeeCapBps??0);return b;
 }
@@ -41,4 +41,11 @@ export function buildPermissionlessCrankData(nowSlot: bigint, assets: readonly n
 export const buildCloseResolvedData = (feeRatePerSlot=0n): Uint8Array => { const b=out(30,17);u128(view(b),1,feeRatePerSlot);return b; };
 export function buildHardFlatData(aId:bigint,aEpoch:bigint,bId:bigint,bEpoch:bigint,assetIndex:number,marketId:bigint,reduceQ:bigint):Uint8Array{
  const b=out(69,67),v=view(b);let o=1;for(const x of[aId,aEpoch,bId,bEpoch]){u64(v,o,x);o+=8}u16(v,o,assetIndex);o+=2;u64(v,o,marketId);o+=8;u128(v,o,reduceQ);return b;
+}
+
+export function buildTradeNoCpiData(r: {accountAPortfolioId: bigint; accountAPositionEpoch: bigint; accountBPortfolioId: bigint; accountBPositionEpoch: bigint; assetIndex: number; marketId: bigint; sizeQ: bigint; execPrice: bigint; feeBps: bigint; backingFeeCapBps?: number}): Uint8Array {
+  if(!r.sizeQ) throw new Error("trade size cannot be zero");
+  const b=out(6,77),v=view(b); let o=1;
+  for(const x of [r.accountAPortfolioId,r.accountAPositionEpoch,r.accountBPortfolioId,r.accountBPositionEpoch]){u64(v,o,x);o+=8}
+  u16(v,o,r.assetIndex);o+=2;u64(v,o,r.marketId);o+=8;i128(v,o,r.sizeQ);o+=16;u64(v,o,r.execPrice);o+=8;u64(v,o,r.feeBps);o+=8;u16(v,o,r.backingFeeCapBps??0);return b;
 }
