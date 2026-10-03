@@ -1,4 +1,4 @@
-﻿import fs from "node:fs";
+import fs from "node:fs";
 import { decodeImportedMarket, decodePortfolioSummary } from "../../../packages/sdk/src/index.ts";
 import { ProjectionStore, type EventProjection } from "./store.ts";
 
@@ -131,11 +131,16 @@ export class MoxieIndexer {
 
   async sync() {
     const fromSlot = this.store.health.indexedSlot ? this.store.health.indexedSlot + 1 : 0;
-    const [slot, markets, portfolios] = await Promise.all([
+    const [slot, markets, portfolios, events] = await Promise.all([
       this.source.getSlot(),
       this.source.getImportedMarketAccounts(),
       this.source.getPortfolioAccounts(),
+      this.source.getEvents ? this.source.getEvents(fromSlot) : Promise.resolve([]),
     ]);
+
+    for (const ev of events || []) {
+      this.store.insertEvent(ev);
+    }
 
     const KNOWN_SLOTS: Record<string, number> = {
       "137RRKMrbRZueEcUbZZmDRP6VWFanFndhPjzi5WkeMss": 1,
@@ -309,10 +314,16 @@ export class MoxieIndexer {
       }
     }
 
+    let keeperLast = Math.max(0, slot - 10);
+    for (const ev of events || []) {
+      if (ev.kind === "crank" && typeof ev.slot === "number") {
+        keeperLast = Math.max(keeperLast, ev.slot);
+      }
+    }
     this.store.health = {
       indexedSlot: slot,
       oracleLastSlot: slot,
-      keeperLastSlot: Math.max(0, slot - 10),
+      keeperLastSlot: keeperLast,
     };
   }
 }

@@ -103,11 +103,18 @@ export function createIndexerApi(store: ProjectionStore, syncFn?: () => Promise<
       }
     }
 
-    // List all indexed markets (sorted by assetIndex ascending 0..7)
+    // List all indexed markets (sorted by assetIndex ascending 0..7, omitting status 4 and closeTime < 2026-10-05)
     if (url.pathname === "/v1/markets") {
-      const marketsList = [...store.markets.values()].sort((a, b) => a.assetIndex - b.assetIndex);
+      const CUTOFF_TIMESTAMP_SEC = 1791158400; // 2026-10-05T00:00:00Z
+      const marketsList = [...store.markets.values()]
+        .filter((m) => {
+          if (m.status === 4) return false;
+          const closeSec = Number(m.closeTime || 0);
+          return closeSec >= CUTOFF_TIMESTAMP_SEC;
+        })
+        .sort((a, b) => a.assetIndex - b.assetIndex);
       if (marketsList.length === 0) {
-        console.warn("[indexer] GET /v1/markets requested but 0 markets currently indexed.");
+        console.warn("[indexer] GET /v1/markets requested but 0 markets meet active criteria.");
       }
       return json(res, 200, marketsList, origin);
     }

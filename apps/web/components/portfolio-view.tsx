@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
@@ -43,7 +43,7 @@ if (typeof window !== "undefined" && !(window as any).Buffer) {
 }
 
 function shortAddress(address: string) {
-  return `${address.slice(0, 4)}…${address.slice(-4)}`;
+  return `${address.slice(0, 4)}�${address.slice(-4)}`;
 }
 
 export function PortfolioView({ markets }: { markets: Market[] }) {
@@ -262,6 +262,17 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       const sig = await wallet.signAndSendTransaction(tx, connection);
       const pAddress = portfolioPubkey.toBase58();
       setUserPortfolioAddress(pAddress);
+
+      // Upsert portfolio to Neon cache
+      fetch("/api/portfolios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          walletPubkey: activePubkey.toBase58(),
+          portfolioAddress: pAddress,
+          marketAddress: DEVNET_DEPLOYMENT.marketAccount || "global",
+        }),
+      }).catch((e) => console.warn("Portfolio Neon cache upsert skipped:", e));
       if (typeof window !== "undefined") {
         localStorage.setItem(`moxie_portfolio_${activePubkey.toBase58()}`, pAddress);
       }
@@ -469,7 +480,7 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>
           <small style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "4px" }}>ACCOUNT EQUITY</small>
           <strong style={{ fontSize: "20px", color: "#c7ff4a" }}>${equityUsdc.toFixed(2)}</strong>
-          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Deposited ± Profit</span>
+          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "4px" }}>Deposited � Profit</span>
         </div>
 
         <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", padding: "16px 20px", borderRadius: "8px" }}>

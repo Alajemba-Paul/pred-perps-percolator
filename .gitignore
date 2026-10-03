@@ -16,3 +16,5 @@ deployments/jupiter-live-market.json
 .data/
 test-ledger/
 vendor/*/target/
+
+*.tsbuildinfo

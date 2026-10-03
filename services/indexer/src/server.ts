@@ -13,6 +13,7 @@ import { createIndexerApi } from "./api.ts";
 import { MoxieIndexer } from "./indexer.ts";
 import { loadSnapshot, saveSnapshot } from "./persistence.ts";
 import { SolanaRpcSource } from "./rpc-source.ts";
+import { upsertMarketsCache } from "../../../packages/db/index.ts";
 
 const required = (name: string) => {
   const x = process.env[name];
@@ -56,6 +57,7 @@ try {
     console.log(`[indexer] Initial sync succeeded: ${indexer.store.markets.size} market(s) active.`);
   }
   await saveSnapshot(indexer.store, snapshot);
+  await syncMarketsToNeon();
 } catch (e) {
   console.error("[indexer] Initial sync failed (will retry in background):", e);
 }
@@ -65,6 +67,7 @@ setInterval(async () => {
   try {
     await indexer.sync();
     await saveSnapshot(indexer.store, snapshot);
+    await syncMarketsToNeon();
   } catch (e) {
     console.error("[indexer] Background sync failed:", e);
   }
@@ -81,3 +84,23 @@ server.listen(port, host, () => {
   const actualPort = typeof addr === "object" && addr?.port ? addr.port : port;
   console.log(`[indexer] Moxie indexer API listening on http://${host}:${actualPort}`);
 });
+
+async function syncMarketsToNeon() {
+  if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) return;
+  try {
+    const list = [...indexer.store.markets.values()].map((m) => ({
+      address: m.address,
+      providerMarketId: m.providerMarketId || m.address,
+      title: m.title,
+      rules: m.rules,
+      status: Number(m.status),
+      markE6: String(m.markE6),
+      indexE6: String(m.indexE6),
+      closeTime: String(m.closeTime),
+      assetIndex: Number(m.assetIndex),
+    }));
+    await upsertMarketsCache(list);
+  } catch (err) {
+    console.warn("[indexer] Neon cache upsert error:", err);
+  }
+}
