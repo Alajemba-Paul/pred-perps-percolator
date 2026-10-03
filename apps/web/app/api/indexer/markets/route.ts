@@ -1,70 +1,15 @@
 ﻿import { NextResponse } from "next/server";
-import { Connection, PublicKey } from "@solana/web3.js";
-import { DEVNET_DEPLOYMENT, decodeImportedMarket } from "@/lib/contracts";
 import type { ApiMarket } from "@/lib/markets";
 import { getIndexerUrl } from "@/lib/api";
-import fs from "fs";
-import path from "path";
+import { VERIFIED_CANDIDATE_MARKETS } from "@/lib/market-candidates";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 35;
 
 export const CUTOFF_TIMESTAMP_SEC = 1791158400; // 2026-10-05T00:00:00Z
 
-function getImportedCandidates(): any[] {
-  try {
-    const candidatePaths = [
-      path.resolve(process.cwd(), "deployments/imported-markets.json"),
-      path.resolve(process.cwd(), "../../deployments/imported-markets.json"),
-    ];
-    for (const p of candidatePaths) {
-      if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, "utf-8"));
-      }
-    }
-  } catch (e) {
-    console.warn("Could not read imported-markets.json:", e);
-  }
-  return [];
-}
-
-const DEFAULT_METADATA: Record<string, { title: string; rules: string }> = {
-  "POLY-601826": {
-    title: "Brazil Presidential Election: Flávio Bolsonaro",
-    rules: "A presidential election is scheduled to take place in Brazil on October 4, 2026. Resolves to 1 (YES) if Flávio Bolsonaro wins, 0 (NO) otherwise.",
-  },
-  "POLY-2589812": {
-    title: "Fed Interest Rates (Oct 2026): No change",
-    rules: "The FED interest rates decision after October 2026 FOMC meeting. Resolves to 1 (YES) if target range is unchanged, 0 (NO) otherwise.",
-  },
-  "POLY-5170737": {
-    title: "Bitcoin Nov 2026 Target: Drops to $82,500",
-    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT in November 2026 has a Low equal to or lower than $82,500, 0 (NO) otherwise.",
-  },
-  "POLY-5208385": {
-    title: "Bitcoin Target: Reaches $86,000",
-    rules: "Resolves to 1 (YES) if any Binance 1-minute candle for BTC/USDT has a High equal to or greater than $86,000, 0 (NO) otherwise.",
-  },
-  "POLY-608545": {
-    title: "Ballon d’Or 2026 Winner: Lamine Yamal",
-    rules: "This market resolves to 1 (YES) if Lamine Yamal wins the 2026 Ballon d'Or according to France Football, 0 (NO) otherwise.",
-  },
-  "POLY-561974": {
-    title: "US 2028 Republican Nominee: J.D. Vance",
-    rules: "Resolves to 1 (YES) if J.D. Vance wins and accepts the 2028 Republican nomination for U.S. President, 0 (NO) otherwise.",
-  },
-  "POLY-679018": {
-    title: "French Presidential Election 2027: Marine Le Pen",
-    rules: "Resolves to 1 (YES) if Marine Le Pen wins the next French presidential election, 0 (NO) otherwise.",
-  },
-  "POLY-2772176": {
-    title: "UEFA Champions League 2026-27: Barcelona",
-    rules: "Resolves to 1 (YES) if FC Barcelona wins the 2026-27 UEFA Champions League, 0 (NO) otherwise.",
-  },
-};
-
 export async function GET() {
-  const candidates = getImportedCandidates();
+  const candidates = VERIFIED_CANDIDATE_MARKETS;
   const indexerBase = getIndexerUrl();
 
   let liveMarkets: ApiMarket[] = [];
@@ -89,8 +34,8 @@ export async function GET() {
     }
   }
 
+  // If indexer provided data, map slots replacing old/closed matches with candidates closing >= 5 Oct 2026
   if (liveMarkets.length > 0) {
-    // Overlay replacements onto any retired/old matches or markets closing before cutoff
     const results = liveMarkets.map((m, idx) => {
       const closeSec = Number(m.closeTime || 0);
       const isOldOrBeforeCutoff =
@@ -104,15 +49,14 @@ export async function GET() {
         m.providerMarketId === "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3";
 
       if (isOldOrBeforeCutoff) {
-        const rep = candidates[idx % candidates.length] || candidates[0];
-        const repCloseSec = rep.closeTimeMs ? Math.floor(rep.closeTimeMs / 1000) : 1791172800;
+        const rep = candidates[idx % candidates.length];
+        const repCloseSec = Math.floor(rep.closeTimeMs / 1000);
         const repMark = String(rep.initialMarkE6 || 500000);
-        const meta = DEFAULT_METADATA[rep.providerMarketId];
         return {
           address: rep.providerMarketId || `moxie-market-slot-${idx}`,
           providerMarketId: rep.providerMarketId || `POLY-slot-${idx}`,
-          title: meta?.title || rep.title,
-          rules: meta?.rules || rep.rules || "Prediction perpetual market on Solana Devnet.",
+          title: rep.title,
+          rules: rep.rules,
           slot: m.slot || 0,
           assetIndex: idx,
           marketId: String(idx),
@@ -124,32 +68,21 @@ export async function GET() {
         };
       }
 
-      const meta = DEFAULT_METADATA[m.providerMarketId] || DEFAULT_METADATA[m.address];
-      let title = meta?.title || m.title;
-      let rules = meta?.rules || m.rules;
-      if (/^[0-9a-fA-F]{64}$/.test(title)) {
-        title = "Prediction Market";
-      }
-      return {
-        ...m,
-        title,
-        rules: rules || "Prediction perpetual market on Solana Devnet.",
-      };
+      return m;
     });
 
     return NextResponse.json(results);
   }
 
-  // Fallback if indexer unreachable: return all 8 verified candidates
-  const results: ApiMarket[] = candidates.map((c: any, idx: number) => {
-    const closeSec = c.closeTimeMs ? Math.floor(c.closeTimeMs / 1000) : 1791172800;
+  // Fallback: Return all 8 verified candidates
+  const results: ApiMarket[] = candidates.map((c, idx) => {
+    const closeSec = Math.floor(c.closeTimeMs / 1000);
     const markE6 = String(c.initialMarkE6 || 500000);
-    const meta = DEFAULT_METADATA[c.providerMarketId];
     return {
       address: c.providerMarketId || `moxie-market-slot-${idx + 1}`,
       providerMarketId: c.providerMarketId || `POLY-slot-${idx + 1}`,
-      title: meta?.title || c.title,
-      rules: meta?.rules || c.rules || "Prediction perpetual market on Solana Devnet.",
+      title: c.title,
+      rules: c.rules,
       slot: 0,
       assetIndex: idx + 1,
       marketId: String(idx + 1),
