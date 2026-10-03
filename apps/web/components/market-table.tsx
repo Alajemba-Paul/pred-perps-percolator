@@ -42,7 +42,9 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
     const isSpecialSlot =
       m.title.startsWith("Unused Slot") ||
       m.title.startsWith("Percolator Collateral") ||
-      m.title.includes("(Record #1)");
+      m.title.includes("(Record #1)") ||
+      m.title.includes("Columbus") ||
+      m.title.includes("BetBoom");
     const closeSec = m.closeTime ? Math.floor(new Date(m.closeTime).getTime() / 1000) : 0;
     const passesCutoff = closeSec >= 1791158400;
     return isActive && !isSpecialSlot && passesCutoff;

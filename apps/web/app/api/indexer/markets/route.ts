@@ -89,13 +89,17 @@ export async function GET() {
     }
   }
 
-  // Filter out any market closing before 2026-10-05T00:00:00Z
+  // Filter out any market closing before 2026-10-05T00:00:00Z and old matches (Columbus, BetBoom)
   const validLive = liveMarkets.filter((m) => {
     const closeSec = Number(m.closeTime || 0);
     const isSpecialSlot =
       m.title.startsWith("Unused Slot") ||
       m.title.startsWith("Percolator Collateral") ||
-      m.title.includes("(Record #1)");
+      m.title.includes("(Record #1)") ||
+      m.title.includes("Columbus") ||
+      m.title.includes("BetBoom") ||
+      m.providerMarketId === "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06" ||
+      m.providerMarketId === "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3";
     return closeSec >= CUTOFF_TIMESTAMP_SEC && !isSpecialSlot;
   });
 
