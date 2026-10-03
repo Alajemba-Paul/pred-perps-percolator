@@ -17,13 +17,34 @@ export const dynamic = "force-dynamic";
 const rateLimitMap = new Map<string, number>();
 
 function getPayerKeypair(): Keypair | null {
-  if (process.env.DEVNET_PAYER_SECRET) {
+  const raw = process.env.DEVNET_PAYER_SECRET?.trim();
+  if (raw) {
     try {
-      const secret = JSON.parse(process.env.DEVNET_PAYER_SECRET);
-      return Keypair.fromSecretKey(Uint8Array.from(secret));
-    } catch (e) {
-      console.error("Failed to parse DEVNET_PAYER_SECRET as JSON array", e);
-    }
+      let parsed = JSON.parse(raw);
+      if (typeof parsed === "string") {
+        parsed = JSON.parse(parsed);
+      }
+      if (Array.isArray(parsed)) {
+        return Keypair.fromSecretKey(Uint8Array.from(parsed));
+      }
+    } catch {}
+
+    try {
+      if (raw.includes(",")) {
+        const cleaned = raw.replace(/[\[\]\s]/g, "");
+        const nums = cleaned.split(",").map((x) => parseInt(x, 10));
+        if (nums.length === 64 && nums.every((n) => !isNaN(n))) {
+          return Keypair.fromSecretKey(Uint8Array.from(nums));
+        }
+      }
+    } catch {}
+
+    try {
+      const b64 = Buffer.from(raw, "base64");
+      if (b64.length === 64) {
+        return Keypair.fromSecretKey(b64);
+      }
+    } catch {}
   }
 
   const idPaths = [
@@ -37,9 +58,7 @@ function getPayerKeypair(): Keypair | null {
       try {
         const secret = JSON.parse(fs.readFileSync(p, "utf-8"));
         return Keypair.fromSecretKey(Uint8Array.from(secret));
-      } catch (e) {
-        // ignore local file error
-      }
+      } catch {}
     }
   }
 
