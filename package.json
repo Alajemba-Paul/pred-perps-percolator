@@ -27,7 +27,8 @@
     "proof:export": "node scripts/not-implemented.mjs proof:export 'Phase 15: proof manifest'",
     "verify:upstream": "node scripts/verify-upstream.mjs",
     "config:market-group": "node scripts/print-market-group.mjs",
-    "db:migrate": "node --experimental-strip-types packages/db/migrate.ts",`n    "indexer:start": "node --experimental-strip-types services/indexer/src/server.ts",
+    "db:migrate": "node --experimental-strip-types packages/db/migrate.ts",
+    "indexer:start": "node --experimental-strip-types services/indexer/src/server.ts",
     "keeper:prices": "node scripts/keeper-price-feed.mjs",
     "keeper:prices:once": "node scripts/keeper-price-feed.mjs --once"
   },
