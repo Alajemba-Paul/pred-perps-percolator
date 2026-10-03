@@ -89,37 +89,58 @@ export async function GET() {
     }
   }
 
-  // Filter out any market closing before 2026-10-05T00:00:00Z and old matches (Columbus, BetBoom)
-  const validLive = liveMarkets.filter((m) => {
-    const closeSec = Number(m.closeTime || 0);
-    const isSpecialSlot =
-      m.title.startsWith("Unused Slot") ||
-      m.title.startsWith("Percolator Collateral") ||
-      m.title.includes("(Record #1)") ||
-      m.title.includes("Columbus") ||
-      m.title.includes("BetBoom") ||
-      m.providerMarketId === "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06" ||
-      m.providerMarketId === "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3";
-    return closeSec >= CUTOFF_TIMESTAMP_SEC && !isSpecialSlot;
-  });
+  if (liveMarkets.length > 0) {
+    // Overlay replacements onto any retired/old matches or markets closing before cutoff
+    const results = liveMarkets.map((m, idx) => {
+      const closeSec = Number(m.closeTime || 0);
+      const isOldOrBeforeCutoff =
+        closeSec < CUTOFF_TIMESTAMP_SEC ||
+        m.title.startsWith("Unused Slot") ||
+        m.title.startsWith("Percolator Collateral") ||
+        m.title.includes("(Record #1)") ||
+        m.title.includes("Columbus") ||
+        m.title.includes("BetBoom") ||
+        m.providerMarketId === "86fc6f6f6137b7307cac30d6d73f85af21bb9804eb7b143682a4546a9ea78c06" ||
+        m.providerMarketId === "b406280f15eb31f25dd0eece1eefe403f29d0d22a5b113269afa9573cc0546a3";
 
-  // If we already have 5+ valid live markets passing cutoff from indexer, normalize and return them
-  if (validLive.length >= 5) {
-    const normalized = validLive.map((m) => {
+      if (isOldOrBeforeCutoff) {
+        const rep = candidates[idx % candidates.length] || candidates[0];
+        const repCloseSec = rep.closeTimeMs ? Math.floor(rep.closeTimeMs / 1000) : 1791172800;
+        const repMark = String(rep.initialMarkE6 || 500000);
+        const meta = DEFAULT_METADATA[rep.providerMarketId];
+        return {
+          address: rep.providerMarketId || `moxie-market-slot-${idx}`,
+          providerMarketId: rep.providerMarketId || `POLY-slot-${idx}`,
+          title: meta?.title || rep.title,
+          rules: meta?.rules || rep.rules || "Prediction perpetual market on Solana Devnet.",
+          slot: m.slot || 0,
+          assetIndex: idx,
+          marketId: String(idx),
+          status: 1, // Active
+          markE6: repMark,
+          indexE6: repMark,
+          closeTime: String(repCloseSec),
+          oracleUpdatedAt: String(Math.floor(Date.now() / 1000)),
+        };
+      }
+
       const meta = DEFAULT_METADATA[m.providerMarketId] || DEFAULT_METADATA[m.address];
       let title = meta?.title || m.title;
       let rules = meta?.rules || m.rules;
-      if (/^[0-9a-fA-F]{64}$/.test(title)) title = "Prediction Market";
+      if (/^[0-9a-fA-F]{64}$/.test(title)) {
+        title = "Prediction Market";
+      }
       return {
         ...m,
         title,
         rules: rules || "Prediction perpetual market on Solana Devnet.",
       };
     });
-    return NextResponse.json(normalized);
+
+    return NextResponse.json(results);
   }
 
-  // Fallback: Return verified candidates closing >= 5 Oct 2026
+  // Fallback if indexer unreachable: return all 8 verified candidates
   const results: ApiMarket[] = candidates.map((c: any, idx: number) => {
     const closeSec = c.closeTimeMs ? Math.floor(c.closeTimeMs / 1000) : 1791172800;
     const markE6 = String(c.initialMarkE6 || 500000);
