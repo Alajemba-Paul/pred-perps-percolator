@@ -17,17 +17,21 @@ async function runMigration() {
 
   const migrationFile = resolve(__dirname, "migrations/0000_neon_cache.sql");
   console.log(`[db:migrate] Reading migration: ${migrationFile}`);
-  const migrationSql = readFileSync(migrationFile, "utf-8");
+  const rawSql = readFileSync(migrationFile, "utf-8");
+
+  // Strip single-line comments
+  const cleanSql = rawSql.replace(/--.*$/gm, "");
 
   console.log("[db:migrate] Executing migration statements...");
-  const statements = migrationSql
+  const statements = cleanSql
     .split(";")
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith("--"));
+    .filter((s) => s.length > 0);
 
   for (const stmt of statements) {
-    console.log(`[db:migrate] Executing: ${stmt.slice(0, 50).replace(/\s+/g, " ")}...`);
-    await sql(stmt);
+    const preview = stmt.slice(0, 50).replace(/\s+/g, " ");
+    console.log(`[db:migrate] Executing: ${preview}...`);
+    await (sql as any).query(stmt);
   }
 
   console.log("[db:migrate] Migration applied successfully to Neon Postgres branch production!");
