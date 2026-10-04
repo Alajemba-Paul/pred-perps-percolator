@@ -168,8 +168,10 @@ export function Terminal({ market }: { market: Market }) {
 
   const isTradable = market.status === "active" || market.status === 1;
 
-  // Execute trade
+  // Execute trade (Single click handler, no page-load cache comparison)
   async function handleExecuteTrade() {
+    if (isSubmitting) return;
+
     if (!wallet.connected || !activePubkey) {
       setTradeError("Reconnect wallet");
       return;
@@ -204,48 +206,44 @@ export function Terminal({ market }: { market: Market }) {
       const matcherContextPubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherContext);
       const matcherDelegatePubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherDelegate);
 
-      // 1. Read market account, user portfolio, and LP portfolio in the SAME RPC call as fresh blockhash
-      const freshState = await fetchFreshChainState(connection, activePubkey);
-      const { blockhash, marketAccountData, userPortfolioData, lpPortfolioData } = freshState;
+      // 1. Fetch market account, user portfolio, and LP portfolio directly from chain in the same flow
+      const [marketAccInfo, userAccInfo, lpAccInfo] = await connection.getMultipleAccountsInfo(
+        [marketAccount, userPortfolioPubkey, lpPortfolioPubkey],
+        "confirmed"
+      );
 
-      // 2. Validate user portfolio is initialized
-      if (!userPortfolioData || userPortfolioData.length < DEVNET_DEPLOYMENT.portfolioAccountLen) {
+      if (!marketAccInfo || marketAccInfo.data.length < 464 + 726) {
+        throw new Error("Market account not found or invalid on Solana Devnet.");
+      }
+
+      if (!userAccInfo || userAccInfo.data.length < DEVNET_DEPLOYMENT.portfolioAccountLen) {
         setTradeError("Trading account not found onchain. Please create your trading account on the Portfolio page first.");
+        setIsSubmitting(false);
         return;
       }
-      const userDecoded = decodePortfolioSummary(userPortfolioData);
+
+      // 2. Decode user portfolio
+      const userDecoded = decodePortfolioSummary(userAccInfo.data);
       const traderPortfolioId = userDecoded.portfolioId;
       const traderPositionEpoch = userDecoded.positionEpoch;
 
-      // 3. Read LP portfolio parameters directly from fresh chain state
+      // 3. Decode LP portfolio
       let lpPortfolioId = 2n;
       let lpPositionEpoch = 2n;
       let lpMatcherSequence = 2n;
-      if (lpPortfolioData && lpPortfolioData.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
-        const lpDecoded = decodePortfolioSummary(lpPortfolioData);
+      if (lpAccInfo && lpAccInfo.data.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
+        const lpDecoded = decodePortfolioSummary(lpAccInfo.data);
         lpPortfolioId = lpDecoded.portfolioId;
         lpPositionEpoch = lpDecoded.positionEpoch;
         lpMatcherSequence = lpDecoded.sequence;
       }
 
-      // 4. Resolve assetIndex and check chain generation against ticket
-      const ticketAssetIndex = Number(market.assetIndex) || 1;
-      const ticketMarketId = market.marketId !== undefined && market.marketId !== null && String(market.marketId).trim() !== ""
-        ? String(market.marketId)
-        : "";
+      // 4. Decode the asset slot directly from the fresh market account onchain (no cache comparison)
+      const targetAssetIndex = Number(market.assetIndex) || 1;
+      const chainSlot = decodeMarketAssetSlot(marketAccInfo.data, targetAssetIndex);
+      const freshMarketId = chainSlot.marketId;
 
-      // Decode the asset slot directly from the fresh market account onchain
-      const chainSlot = decodeMarketAssetSlot(marketAccountData, ticketAssetIndex);
-      const chainGeneration = chainSlot.marketId;
-
-      // If the chain generation does not match the ticket, show "Market updated. Refresh and try again." Do not submit.
-      if (ticketMarketId && BigInt(ticketMarketId) !== chainGeneration) {
-        console.warn("Chain generation mismatch: ticket has " + ticketMarketId + ", but chain has " + chainGeneration);
-        setTradeError("Market updated. Refresh and try again.");
-        return;
-      }
-
-      // 5. Build trade parameters: Long = positive size, Short = negative size (no Yes/No tag)
+      // 5. Build trade parameters: Long = positive size, Short = negative size
       const sizeMicroUnits = BigInt(Math.floor(estimatedContracts * 1_000_000));
       const signedSizeQ = side === "Long" ? sizeMicroUnits : -sizeMicroUnits;
       const limitPriceE6 = BigInt(Math.round(activeMark * 1_000_000));
@@ -256,19 +254,17 @@ export function Terminal({ market }: { market: Market }) {
         lpPortfolioId,
         lpPositionEpoch,
         lpMatcherSequence,
-        assetIndex: ticketAssetIndex,
-        marketId: chainGeneration,
+        assetIndex: targetAssetIndex,
+        marketId: freshMarketId,
         sizeQ: signedSizeQ,
         limitPriceE6,
         feeBps: 30n,
         backingFeeCapBps: 0,
       });
 
-      console.log("Instruction: TradeCpi, byte length:", tradeData.length);
+      console.log("Instruction: TradeCpi, sizeQ:", signedSizeQ.toString(), "marketId:", freshMarketId.toString());
 
       const tx = new Transaction();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = activePubkey;
       tx.add(
         new TransactionInstruction({
           programId: percolatorProgramId,
@@ -285,21 +281,52 @@ export function Terminal({ market }: { market: Market }) {
         })
       );
 
+      // 6. Fetch the blockhash LAST using the same Alchemy devnet RPC
+      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = latestBlockhash.blockhash;
+      tx.feePayer = activePubkey;
+
+      // 7. Submit transaction
       const sig = await wallet.signAndSendTransaction(tx, connection);
       setTxSignature(sig);
       await refreshAccountAndPosition();
     } catch (err: any) {
       console.error("Trade execution error:", err);
       const msg = err?.message || String(err);
-      if (msg.includes("0x1e") || msg.includes("Custom: 30") || msg.includes("AssetGenerationMismatch")) {
+
+      // Show "Market updated. Refresh and try again." only if the program actually returns custom error 0x1e
+      const is0x1e =
+        msg.includes("0x1e") ||
+        msg.includes("Custom: 30") ||
+        msg.includes("AssetGenerationMismatch") ||
+        msg.includes("Market updated. Refresh and try again.");
+
+      if (is0x1e) {
         setTradeError("Market updated. Refresh and try again.");
-      } else if (msg.includes("0xd") || msg.includes("Custom: 13") || msg.includes("InvalidTokenProgram")) {
-        setTradeError("Wrong token program on the USDC accounts.");
-      } else if (msg.includes("Reconnect")) {
-        setTradeError("Reconnect wallet");
-      } else {
-        setTradeError(msg);
+        try {
+          await refreshAccountAndPosition();
+        } catch {}
+        return;
       }
+
+      const is0xd =
+        msg.includes("0xd") ||
+        msg.includes("Custom: 13") ||
+        msg.includes("InvalidTokenProgram") ||
+        msg.includes("Wrong token program on the USDC accounts.");
+
+      if (is0xd) {
+        setTradeError("Wrong token program on the USDC accounts.");
+        return;
+      }
+
+      if (msg.includes("Reconnect")) {
+        setTradeError("Reconnect wallet");
+        return;
+      }
+
+      // On failure, show getLogs(), once.
+      setTradeError(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -350,7 +377,7 @@ export function Terminal({ market }: { market: Market }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <button
               type="button"
-              onClick={() => setSide("Long")}
+              onClick={() => { setSide("Long"); setTradeError(null); }}
               style={{
                 padding: "12px",
                 borderRadius: "6px",
@@ -367,7 +394,7 @@ export function Terminal({ market }: { market: Market }) {
 
             <button
               type="button"
-              onClick={() => setSide("Short")}
+              onClick={() => { setSide("Short"); setTradeError(null); }}
               style={{
                 padding: "12px",
                 borderRadius: "6px",
