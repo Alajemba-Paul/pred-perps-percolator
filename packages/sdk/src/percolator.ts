@@ -49,3 +49,30 @@ export function buildTradeNoCpiData(r: {accountAPortfolioId: bigint; accountAPos
   for(const x of [r.accountAPortfolioId,r.accountAPositionEpoch,r.accountBPortfolioId,r.accountBPositionEpoch]){u64(v,o,x);o+=8}
   u16(v,o,r.assetIndex);o+=2;u64(v,o,r.marketId);o+=8;i128(v,o,r.sizeQ);o+=16;u64(v,o,r.execPrice);o+=8;u64(v,o,r.feeBps);o+=8;u16(v,o,r.backingFeeCapBps??0);return b;
 }
+
+export type MarketAssetSlot = {
+  marketId: bigint;
+  retiredSlot: bigint;
+  lifecycle: number;
+  targetPrice: bigint;
+  effectivePrice: bigint;
+};
+
+export function decodeMarketAssetSlot(data: Uint8Array, assetIndex: number): MarketAssetSlot {
+  if (data.length < 464 + 726) throw new Error("invalid market account length");
+  const engineOffset = 1702 + assetIndex * 1813;
+  if (engineOffset + 35 > data.length) throw new Error("asset index out of bounds");
+  const v = view(data);
+  return {
+    marketId: v.getBigUint64(engineOffset, true),
+    retiredSlot: v.getBigUint64(engineOffset + 8, true),
+    lifecycle: data[engineOffset + 16],
+    targetPrice: v.getBigUint64(engineOffset + 17, true),
+    effectivePrice: v.getBigUint64(engineOffset + 25, true),
+  };
+}
+
+export function decodeMarketHeader(data: Uint8Array): { nextMarketId: bigint } {
+  if (data.length < 464 + 726) throw new Error("invalid market account length");
+  return { nextMarketId: view(data).getBigUint64(1013, true) };
+}

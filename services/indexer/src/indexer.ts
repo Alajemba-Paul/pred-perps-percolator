@@ -230,7 +230,7 @@ export class MoxieIndexer {
             rules: candidate.rules || "Prediction perpetual market on Solana Devnet.",
             slot: a.slot,
             assetIndex: idx,
-            marketId: String(idx),
+            marketId: (record && m ? m.marketId.toString() : String(idx + 1)),
             status: 1, // Active
             markE6: mark,
             indexE6: mark,
@@ -281,7 +281,7 @@ export class MoxieIndexer {
           rules: candidate.rules || "Prediction perpetual market on Solana Devnet.",
           slot,
           assetIndex: idx,
-          marketId: String(idx),
+          marketId: (record && m ? m.marketId.toString() : String(idx + 1)),
           status: 1, // Active, tradable
           markE6: mark,
           indexE6: mark,

@@ -16,6 +16,8 @@ import {
   deriveUserPortfolioAddress,
   getUserAta,
   decodePortfolioSummary,
+  decodeMarketAssetSlot,
+  fetchFreshChainState,
   buildTradeCpiData,
 } from "@/lib/contracts";
 import { useUnifiedWallet } from "./wallet-providers";
@@ -185,7 +187,7 @@ export function Terminal({ market }: { market: Market }) {
       return;
     }
     if ((usdcBalance ?? 0) < numSizeUsdc) {
-      setTradeError(`Insufficient test USDC balance ($${(usdcBalance ?? 0).toFixed(2)} available).`);
+      setTradeError(`Insufficient test USDC balance (${(usdcBalance ?? 0).toFixed(2)} available).`);
       return;
     }
 
@@ -202,38 +204,51 @@ export function Terminal({ market }: { market: Market }) {
       const matcherContextPubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherContext);
       const matcherDelegatePubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherDelegate);
 
-      // Read user portfolio ID and position epoch directly from chain
-      const userAccInfo = await connection.getAccountInfo(userPortfolioPubkey, "confirmed");
-      if (!userAccInfo || userAccInfo.data.length < DEVNET_DEPLOYMENT.portfolioAccountLen) {
+      // 1. Read market account, user portfolio, and LP portfolio in the SAME RPC call as fresh blockhash
+      const freshState = await fetchFreshChainState(connection, activePubkey);
+      const { blockhash, marketAccountData, userPortfolioData, lpPortfolioData } = freshState;
+
+      // 2. Validate user portfolio is initialized
+      if (!userPortfolioData || userPortfolioData.length < DEVNET_DEPLOYMENT.portfolioAccountLen) {
         setTradeError("Trading account not found onchain. Please create your trading account on the Portfolio page first.");
         return;
       }
-      const userDecoded = decodePortfolioSummary(userAccInfo.data);
+      const userDecoded = decodePortfolioSummary(userPortfolioData);
       const traderPortfolioId = userDecoded.portfolioId;
       const traderPositionEpoch = userDecoded.positionEpoch;
 
-      // Read LP portfolio parameters directly from chain
+      // 3. Read LP portfolio parameters directly from fresh chain state
       let lpPortfolioId = 2n;
       let lpPositionEpoch = 2n;
       let lpMatcherSequence = 2n;
-      try {
-        const lpAccInfo = await connection.getAccountInfo(lpPortfolioPubkey, "confirmed");
-        if (lpAccInfo && lpAccInfo.data.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
-          const lpDecoded = decodePortfolioSummary(lpAccInfo.data);
-          lpPortfolioId = lpDecoded.portfolioId;
-          lpPositionEpoch = lpDecoded.positionEpoch;
-          lpMatcherSequence = lpDecoded.sequence;
-        }
-      } catch (e) {
-        console.warn("Using default LP portfolio parameters:", e);
+      if (lpPortfolioData && lpPortfolioData.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
+        const lpDecoded = decodePortfolioSummary(lpPortfolioData);
+        lpPortfolioId = lpDecoded.portfolioId;
+        lpPositionEpoch = lpDecoded.positionEpoch;
+        lpMatcherSequence = lpDecoded.sequence;
       }
 
+      // 4. Resolve assetIndex and check chain generation against ticket
+      const ticketAssetIndex = Number(market.assetIndex) || 1;
+      const ticketMarketId = market.marketId !== undefined && market.marketId !== null && String(market.marketId).trim() !== ""
+        ? String(market.marketId)
+        : "";
+
+      // Decode the asset slot directly from the fresh market account onchain
+      const chainSlot = decodeMarketAssetSlot(marketAccountData, ticketAssetIndex);
+      const chainGeneration = chainSlot.marketId;
+
+      // If the chain generation does not match the ticket, show "Market updated. Refresh and try again." Do not submit.
+      if (ticketMarketId && BigInt(ticketMarketId) !== chainGeneration) {
+        console.warn("Chain generation mismatch: ticket has " + ticketMarketId + ", but chain has " + chainGeneration);
+        setTradeError("Market updated. Refresh and try again.");
+        return;
+      }
+
+      // 5. Build trade parameters: Long = positive size, Short = negative size (no Yes/No tag)
       const sizeMicroUnits = BigInt(Math.floor(estimatedContracts * 1_000_000));
-      // Long = positive size, short = negative size
       const signedSizeQ = side === "Long" ? sizeMicroUnits : -sizeMicroUnits;
       const limitPriceE6 = BigInt(Math.round(activeMark * 1_000_000));
-      const assetIndex = Number(market.assetIndex) || 1;
-      const marketId = BigInt(market.marketId || "2");
 
       const tradeData = buildTradeCpiData({
         traderPortfolioId,
@@ -241,8 +256,8 @@ export function Terminal({ market }: { market: Market }) {
         lpPortfolioId,
         lpPositionEpoch,
         lpMatcherSequence,
-        assetIndex,
-        marketId,
+        assetIndex: ticketAssetIndex,
+        marketId: chainGeneration,
         sizeQ: signedSizeQ,
         limitPriceE6,
         feeBps: 30n,
@@ -252,6 +267,8 @@ export function Terminal({ market }: { market: Market }) {
       console.log("Instruction: TradeCpi, byte length:", tradeData.length);
 
       const tx = new Transaction();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = activePubkey;
       tx.add(
         new TransactionInstruction({
           programId: percolatorProgramId,
@@ -274,7 +291,15 @@ export function Terminal({ market }: { market: Market }) {
     } catch (err: any) {
       console.error("Trade execution error:", err);
       const msg = err?.message || String(err);
-      setTradeError(msg.includes("Reconnect") ? "Reconnect wallet" : msg);
+      if (msg.includes("0x1e") || msg.includes("Custom: 30") || msg.includes("AssetGenerationMismatch")) {
+        setTradeError("Market updated. Refresh and try again.");
+      } else if (msg.includes("0xd") || msg.includes("Custom: 13") || msg.includes("InvalidTokenProgram")) {
+        setTradeError("Wrong token program on the USDC accounts.");
+      } else if (msg.includes("Reconnect")) {
+        setTradeError("Reconnect wallet");
+      } else {
+        setTradeError(msg);
+      }
     } finally {
       setIsSubmitting(false);
     }

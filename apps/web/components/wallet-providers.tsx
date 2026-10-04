@@ -90,13 +90,35 @@ async function extractTransactionLogs(err: any, connection: Connection, signedTx
 }
 
 function parseErrorSummary(err: any, logs: string[]): string {
+  const rawMsg = err?.message || String(err);
+  const allLogs = logs.join(" ");
+
+  // Map 0x1e (PercolatorError::AssetGenerationMismatch = 30)
+  if (
+    allLogs.includes("0x1e") ||
+    allLogs.includes("Custom: 30") ||
+    allLogs.includes("AssetGenerationMismatch") ||
+    rawMsg.includes("0x1e") ||
+    rawMsg.includes("Custom: 30") ||
+    rawMsg.includes("AssetGenerationMismatch")
+  ) {
+    return "Market updated. Refresh and try again.";
+  }
+
+  // Map 0xd (PercolatorError::InvalidTokenProgram = 13)
+  if (
+    allLogs.includes("0xd") ||
+    allLogs.includes("Custom: 13") ||
+    allLogs.includes("InvalidTokenProgram") ||
+    rawMsg.includes("0xd") ||
+    rawMsg.includes("Custom: 13") ||
+    rawMsg.includes("InvalidTokenProgram")
+  ) {
+    return "Wrong token program on the USDC accounts.";
+  }
+
+  // Show real program log from getLogs() if available
   if (logs.length > 0) {
-    const error0xd = logs.find(
-      (l) => l.includes("custom program error: 0xd") || l.includes("Custom: 13") || l.includes("0xd")
-    );
-    if (error0xd) {
-      return "Custom program error: 0xd (InvalidTokenProgram: verify SPL Token Program account)";
-    }
     const prioritized = [...logs].reverse().find(
       (l) =>
         l.includes("Program log:") ||
@@ -108,20 +130,19 @@ function parseErrorSummary(err: any, logs: string[]): string {
     );
     if (prioritized) {
       return prioritized
-        .replace(/^.*?Program log:s*/i, "")
-        .replace(/^Transaction simulation failed:s*/i, "")
-        .replace(/^Error processing Instruction d+:s*/i, "")
+        .replace(/^.*?Program log:\s*/i, "")
+        .replace(/^Transaction simulation failed:\s*/i, "")
+        .replace(/^Error processing Instruction \d+:\s*/i, "")
         .trim();
     }
   }
 
-  const rawMsg = err?.message || String(err);
   if (/blockhash not found/i.test(rawMsg)) {
     return "Simulation failed: Blockhash not found. Transaction expired before confirmation. Please try again.";
   }
   return rawMsg
-    .replace(/^Transaction simulation failed:s*/i, "")
-    .replace(/^Error processing Instruction d+:s*/i, "")
+    .replace(/^Transaction simulation failed:\s*/i, "")
+    .replace(/^Error processing Instruction \d+:\s*/i, "")
     .trim() || "Transaction failed on Solana Devnet.";
 }
 

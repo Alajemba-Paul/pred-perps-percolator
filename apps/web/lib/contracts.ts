@@ -10,7 +10,7 @@ export const DEVNET_DEPLOYMENT = {
   matcherProgramId: process.env.NEXT_PUBLIC_MATCHER_PROGRAM_ID || "2w2uQ5t6fmiDybWEP9cdGwHUjA2GqgRUohcqMJcbfgbN",
   oracleProgramId: process.env.NEXT_PUBLIC_ORACLE_PROGRAM_ID || "AecrmxU7nvFAVEAy7LcJbEpTFPXax3ByyouKANGSGuD5",
   oracleConfig: "78hrLhgJLdDZGj93rbo6CidrjeWeh2DANZYUYC4jATZY",
-  marketAccount: process.env.NEXT_PUBLIC_MARKET_ACCOUNT || "6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN",
+  marketAccount: process.env.NEXT_PUBLIC_MARKET_ACCOUNT || process.env.MOXIE_MARKET_ACCOUNT || "33x7syToGkpZRLmPyzQ2adiPYXFzr4vmCX5SX2Xz6Sm1",
   marketAuthority: "HcPnKBfkcBCw6fyEorVZAhRqWbZ8AqhaSqGkxXe6tUfm",
   usdcMint: process.env.NEXT_PUBLIC_USDC_MINT || "99NrJRkUwMCyo7TqZCq5GgHxhyfw4hQ5Dn7b8L5TxrkQ",
   collateralVault: process.env.NEXT_PUBLIC_COLLATERAL_VAULT || "2MEe65ZV46ksGFcC5Zb3pmVaF7rxLaWUwxwy7ijdSH5a",
@@ -268,4 +268,127 @@ export function createAssociatedTokenAccountInstruction(
     programId: associatedTokenProgramId,
     data: Buffer.alloc(0),
   });
+}
+
+export type MarketAssetSlot = {
+  marketId: bigint;
+  retiredSlot: bigint;
+  lifecycle: number;
+  targetPrice: bigint;
+  effectivePrice: bigint;
+};
+
+export function decodeMarketAssetSlot(data: Uint8Array, assetIndex: number): MarketAssetSlot {
+  if (data.length < 464 + 726) {
+    throw new Error("Invalid market account length: " + data.length);
+  }
+  // dynamic_slot_offset = 464 + 726 + assetIndex * 1813 = 1190 + assetIndex * 1813
+  // engine_slot_offset = dynamic_slot_offset + 512 = 1702 + assetIndex * 1813
+  const engineOffset = 1702 + assetIndex * 1813;
+  if (engineOffset + 35 > data.length) {
+    throw new Error("Asset index " + assetIndex + " out of bounds in market account");
+  }
+  const v = view(data);
+  return {
+    marketId: v.getBigUint64(engineOffset, true),
+    retiredSlot: v.getBigUint64(engineOffset + 8, true),
+    lifecycle: data[engineOffset + 16],
+    targetPrice: v.getBigUint64(engineOffset + 17, true),
+    effectivePrice: v.getBigUint64(engineOffset + 25, true),
+  };
+}
+
+export function decodeMarketHeader(data: Uint8Array): { nextMarketId: bigint } {
+  if (data.length < 464 + 726) {
+    throw new Error("Invalid market account length: " + data.length);
+  }
+  const v = view(data);
+  return {
+    nextMarketId: v.getBigUint64(1013, true),
+  };
+}
+
+export type FreshChainState = {
+  blockhash: string;
+  lastValidBlockHeight: number;
+  marketAccountData: Uint8Array;
+  userPortfolioData: Uint8Array | null;
+  lpPortfolioData: Uint8Array | null;
+};
+
+/**
+ * Reads market account, user portfolio, and LP portfolio in the SAME RPC call as the fresh blockhash.
+ * Uses a single batch JSON-RPC request for optimal speed and blockhash synchronization.
+ */
+export async function fetchFreshChainState(
+  connection: Connection,
+  userPublicKey: PublicKey
+): Promise<FreshChainState> {
+  const marketPubkey = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
+  const userPortfolioPubkey = await deriveUserPortfolioAddress(userPublicKey);
+  const lpPortfolioPubkey = new PublicKey(DEVNET_DEPLOYMENT.lpPortfolio);
+
+  const rpcUrl = connection.rpcEndpoint;
+  const addresses = [
+    marketPubkey.toBase58(),
+    userPortfolioPubkey.toBase58(),
+    lpPortfolioPubkey.toBase58(),
+  ];
+
+  let blockhash = "";
+  let lastValidBlockHeight = 0;
+  let accountsData: (Uint8Array | null)[] = [null, null, null];
+
+  // 1. Attempt standard Solana JSON-RPC batch request in a single HTTP network round-trip
+  try {
+    const batchBody = [
+      { jsonrpc: "2.0", id: 1, method: "getLatestBlockhash", params: [{ commitment: "confirmed" }] },
+      { jsonrpc: "2.0", id: 2, method: "getMultipleAccounts", params: [addresses, { encoding: "base64", commitment: "confirmed" }] },
+    ];
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(batchBody),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (Array.isArray(json) && json.length === 2) {
+        const bhResp = json.find((r: any) => r.id === 1);
+        const accResp = json.find((r: any) => r.id === 2);
+        if (bhResp?.result?.value?.blockhash && Array.isArray(accResp?.result?.value)) {
+          blockhash = bhResp.result.value.blockhash;
+          lastValidBlockHeight = bhResp.result.value.lastValidBlockHeight || 0;
+          accountsData = accResp.result.value.map((acc: any) => {
+            if (!acc || !acc.data || !acc.data[0]) return null;
+            return Uint8Array.from(Buffer.from(acc.data[0], "base64"));
+          });
+        }
+      }
+    }
+  } catch (batchErr) {
+    console.warn("Batch RPC failed, falling back to parallel RPC:", batchErr);
+  }
+
+  // 2. Parallel fallback if batch returned empty or failed
+  if (!blockhash || !accountsData[0]) {
+    const [latestBlockhash, accInfos] = await Promise.all([
+      connection.getLatestBlockhash("confirmed"),
+      connection.getMultipleAccountsInfo([marketPubkey, userPortfolioPubkey, lpPortfolioPubkey], "confirmed"),
+    ]);
+    blockhash = latestBlockhash.blockhash;
+    lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
+    accountsData = accInfos.map((acc) => (acc ? acc.data : null));
+  }
+
+  if (!accountsData[0]) {
+    throw new Error("Failed to load market account from Solana Devnet.");
+  }
+
+  return {
+    blockhash,
+    lastValidBlockHeight,
+    marketAccountData: accountsData[0],
+    userPortfolioData: accountsData[1],
+    lpPortfolioData: accountsData[2],
+  };
 }

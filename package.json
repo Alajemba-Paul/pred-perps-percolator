@@ -36,5 +36,8 @@
     "@neondatabase/serverless": "^1.2.0",
     "@solana/web3.js": "^1.99.0",
     "drizzle-orm": "^0.45.3"
+  },
+  "devDependencies": {
+    "@neon/config": "^1.8.3"
   }
 }
