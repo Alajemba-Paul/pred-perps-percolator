@@ -10,7 +10,7 @@ export const DEVNET_DEPLOYMENT = {
   matcherProgramId: process.env.NEXT_PUBLIC_MATCHER_PROGRAM_ID || "2w2uQ5t6fmiDybWEP9cdGwHUjA2GqgRUohcqMJcbfgbN",
   oracleProgramId: process.env.NEXT_PUBLIC_ORACLE_PROGRAM_ID || "AecrmxU7nvFAVEAy7LcJbEpTFPXax3ByyouKANGSGuD5",
   oracleConfig: "78hrLhgJLdDZGj93rbo6CidrjeWeh2DANZYUYC4jATZY",
-  marketAccount: process.env.NEXT_PUBLIC_MARKET_ACCOUNT || process.env.MOXIE_MARKET_ACCOUNT || "33x7syToGkpZRLmPyzQ2adiPYXFzr4vmCX5SX2Xz6Sm1",
+  marketAccount: process.env.NEXT_PUBLIC_MARKET_ACCOUNT || process.env.MOXIE_MARKET_ACCOUNT || "6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN",
   marketAuthority: "HcPnKBfkcBCw6fyEorVZAhRqWbZ8AqhaSqGkxXe6tUfm",
   usdcMint: process.env.NEXT_PUBLIC_USDC_MINT || "99NrJRkUwMCyo7TqZCq5GgHxhyfw4hQ5Dn7b8L5TxrkQ",
   collateralVault: process.env.NEXT_PUBLIC_COLLATERAL_VAULT || "2MEe65ZV46ksGFcC5Zb3pmVaF7rxLaWUwxwy7ijdSH5a",

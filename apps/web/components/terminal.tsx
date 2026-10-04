@@ -172,6 +172,12 @@ export function Terminal({ market }: { market: Market }) {
   async function handleExecuteTrade() {
     if (isSubmitting) return;
 
+    // Do not submit if the market is not active
+    if (market.status !== "active" && market.status !== 1) {
+      setTradeError("Market is not active.");
+      return;
+    }
+
     if (!wallet.connected || !activePubkey) {
       setTradeError("Reconnect wallet");
       return;
@@ -206,11 +212,13 @@ export function Terminal({ market }: { market: Market }) {
       const matcherContextPubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherContext);
       const matcherDelegatePubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherDelegate);
 
-      // 1. Fetch market account, user portfolio, and LP portfolio directly from chain in the same flow
-      const [marketAccInfo, userAccInfo, lpAccInfo] = await connection.getMultipleAccountsInfo(
-        [marketAccount, userPortfolioPubkey, lpPortfolioPubkey],
-        "confirmed"
-      );
+      // 1. Read market generation, asset index, portfolio epochs, and blockhash in the same flow (no stale cache)
+      const [marketAccInfo, userAccInfo, lpAccInfo, latestBlockhash] = await Promise.all([
+        connection.getAccountInfo(marketAccount, "confirmed"),
+        connection.getAccountInfo(userPortfolioPubkey, "confirmed"),
+        connection.getAccountInfo(lpPortfolioPubkey, "confirmed"),
+        connection.getLatestBlockhash("confirmed"),
+      ]);
 
       if (!marketAccInfo || marketAccInfo.data.length < 464 + 726) {
         throw new Error("Market account not found or invalid on Solana Devnet.");
@@ -281,25 +289,51 @@ export function Terminal({ market }: { market: Market }) {
         })
       );
 
-      // 6. Fetch the blockhash LAST using the same Alchemy devnet RPC
-      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
       tx.recentBlockhash = latestBlockhash.blockhash;
       tx.feePayer = activePubkey;
 
-      // 7. Submit transaction
+      // 6. Submit transaction
       const sig = await wallet.signAndSendTransaction(tx, connection);
       setTxSignature(sig);
       await refreshAccountAndPosition();
     } catch (err: any) {
       console.error("Trade execution error:", err);
-      const msg = err?.message || String(err);
+      let logLine = "";
+      if (typeof err?.getLogs === "function") {
+        try {
+          const logs = await err.getLogs();
+          if (Array.isArray(logs) && logs.length > 0) {
+            console.log("Transaction logs:", logs);
+            const failLog = [...logs].reverse().find(
+              (l: string) =>
+                l.includes("failed") ||
+                l.includes("Error:") ||
+                l.includes("consumed") ||
+                l.includes("Panicked")
+            );
+            if (failLog) logLine = failLog;
+          }
+        } catch {}
+      } else if (Array.isArray(err?.logs) && err.logs.length > 0) {
+        const failLog = [...err.logs].reverse().find(
+          (l: string) =>
+            l.includes("failed") ||
+            l.includes("Error:") ||
+            l.includes("consumed") ||
+            l.includes("Panicked")
+        );
+        if (failLog) logLine = failLog;
+      }
+
+      const rawMsg = err?.message || String(err);
+      const fullMsg = logLine ? `${rawMsg} (${logLine})` : rawMsg;
 
       // Show "Market updated. Refresh and try again." only if the program actually returns custom error 0x1e
       const is0x1e =
-        msg.includes("0x1e") ||
-        msg.includes("Custom: 30") ||
-        msg.includes("AssetGenerationMismatch") ||
-        msg.includes("Market updated. Refresh and try again.");
+        fullMsg.includes("0x1e") ||
+        fullMsg.includes("Custom: 30") ||
+        fullMsg.includes("AssetGenerationMismatch") ||
+        fullMsg.includes("Market updated. Refresh and try again.");
 
       if (is0x1e) {
         setTradeError("Market updated. Refresh and try again.");
@@ -310,23 +344,24 @@ export function Terminal({ market }: { market: Market }) {
       }
 
       const is0xd =
-        msg.includes("0xd") ||
-        msg.includes("Custom: 13") ||
-        msg.includes("InvalidTokenProgram") ||
-        msg.includes("Wrong token program on the USDC accounts.");
+        fullMsg.includes("0xd") ||
+        fullMsg.includes("Custom: 13") ||
+        fullMsg.includes("InvalidTokenProgram") ||
+        fullMsg.includes("Wrong token program on the USDC accounts.");
 
       if (is0xd) {
         setTradeError("Wrong token program on the USDC accounts.");
         return;
       }
 
-      if (msg.includes("Reconnect")) {
+      if (fullMsg.includes("Reconnect")) {
         setTradeError("Reconnect wallet");
         return;
       }
 
-      // On failure, show getLogs(), once.
-      setTradeError(msg);
+      // One error line only. Clean up newlines or excessive whitespace.
+      const cleanLine = fullMsg.replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
+      setTradeError(cleanLine || "Trade simulation failed.");
     } finally {
       setIsSubmitting(false);
     }
@@ -490,9 +525,9 @@ export function Terminal({ market }: { market: Market }) {
 
           {/* Error Line */}
           {tradeError && (
-            <div style={{ background: "rgba(255,77,77,0.1)", border: "1px solid rgba(255,77,77,0.3)", borderRadius: "6px", padding: "10px", fontSize: "12px", color: "#ff8474", display: "flex", alignItems: "flex-start", gap: "6px" }}>
-              <AlertTriangle size={14} style={{ marginTop: "2px", flexShrink: 0 }} />
-              <span>{tradeError}</span>
+            <div style={{ background: "rgba(255,77,77,0.1)", border: "1px solid rgba(255,77,77,0.3)", borderRadius: "6px", padding: "10px", fontSize: "12px", color: "#ff8474", display: "flex", alignItems: "center", gap: "6px" }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tradeError}</span>
             </div>
           )}
 

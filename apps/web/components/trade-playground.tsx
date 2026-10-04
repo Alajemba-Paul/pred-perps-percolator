@@ -80,7 +80,7 @@ export function TradePlayground() {
             <div className="demo-leverage"><span>LEVERAGE</span>{[1,2,3,4,5].map(value => <button key={value} className={leverage===value?"active":""} onClick={() => setLeverage(value)} type="button">{value}×</button>)}</div>
           </div> : <div className="demo-position">
             <div className="demo-position-values"><span><em>POSITION</em><b className={side}>{side.toUpperCase()} {leverage}×</b></span><span><em>ENTRY</em><b>{entry.toFixed(1)}¢</b></span><span><em>CURRENT</em><b>{current.toFixed(1)}¢</b></span><span><em>DEMO PNL</em><b className={pnl>=0?"positive":"negative"}>{pnl>=0?"+":""}${pnl.toFixed(2)}</b></span></div>
-            <div className="demo-position-actions"><Link href="/trade/sol-above-250-friday">Open this market <ArrowRight size={14}/></Link><button onClick={() => {setSide(null);setStep(0);}} type="button"><RotateCcw size={13}/> Reset</button></div>
+            <div className="demo-position-actions"><Link href="/trade">Trade live markets <ArrowRight size={14}/></Link><button onClick={() => {setSide(null);setStep(0);}} type="button"><RotateCcw size={13}/> Reset</button></div>
           </div>}
           <footer className="demo-footer"><span><ShieldCheck size={13}/> Protected mark active</span><span><Clock3 size={13}/> Locks in 2d 14h</span><em>Interactive demo · No wallet required</em></footer>
         </div>
