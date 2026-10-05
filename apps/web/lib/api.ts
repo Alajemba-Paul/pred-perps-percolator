@@ -4,6 +4,7 @@
   type Market,
   toMarket,
 } from "./markets";
+import { listOpenChainMarkets } from "./open-markets";
 import { DEVNET_DEPLOYMENT, decodePortfolioSummary, decodeImportedMarket } from "./contracts";
 import { Connection, PublicKey } from "@solana/web3.js";
 import fs from "fs";
@@ -113,6 +114,9 @@ export type { ApiPortfolio, ApiMarket, Market };
  * falling back to on-chain Devnet state.
  */
 export async function getMarkets(): Promise<Market[]> {
+  const open = await listOpenChainMarkets();
+  if (open) return open.map(toMarket);
+
   const indexerUrl = getIndexerUrl();
 
   // 1. On server: direct fetch to Render indexer (avoids extra proxy round-trip)
@@ -158,6 +162,16 @@ export async function getMarkets(): Promise<Market[]> {
  * Fetch a specific market by slug/address/id.
  */
 export async function getMarket(address: string): Promise<Market | null> {
+  const open = await listOpenChainMarkets();
+  if (open) {
+    const markets = open.map(toMarket);
+    return (
+      markets.find(
+        (m) => m.slug === address || m.address === address || m.marketId === address || m.providerMarketId === address,
+      ) ?? null
+    );
+  }
+
   const indexerUrl = getIndexerUrl();
 
   // On server: try direct fetch for specific market

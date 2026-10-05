@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { ApiMarket } from "@/lib/markets";
 import { getIndexerUrl } from "@/lib/api";
 import { VERIFIED_CANDIDATE_MARKETS } from "@/lib/market-candidates";
+import { listOpenChainMarkets } from "@/lib/open-markets";
 import { getMarketsFromNeon, upsertMarketsCache } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,13 @@ export const maxDuration = 35;
 const CUTOFF_TIMESTAMP_SEC = 1791158400; // 2026-10-05T00:00:00Z
 
 export async function GET() {
+  const open = await listOpenChainMarkets();
+  if (open) {
+    return NextResponse.json(open, {
+      headers: { "cache-control": "no-store, max-age=0", "x-source": "chain-open" },
+    });
+  }
+
   // 1. Try reading from Neon Postgres first if configured
   try {
     const neonMarkets = await getMarketsFromNeon();

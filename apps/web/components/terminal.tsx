@@ -268,6 +268,16 @@ export function Terminal({ market }: { market: Market }) {
         setIsSubmitting(false);
         return;
       }
+      if (chainSlot.lifecycle !== 2) {
+        setTradeError("This market is closed to new positions.");
+        setIsSubmitting(false);
+        return;
+      }
+      if (chainSlot.targetPrice !== chainSlot.effectivePrice) {
+        setTradeError("The on-chain price has not settled. Try again in a moment.");
+        setIsSubmitting(false);
+        return;
+      }
       const usable = (p: bigint) => p > 0n && p < 1_000_000n;
       const chainPrice = usable(chainSlot.effectivePrice)
         ? chainSlot.effectivePrice
@@ -349,6 +359,8 @@ export function Terminal({ market }: { market: Market }) {
         const line = failLog || "Trade simulation failed.";
         if (line.includes("0x8")) {
           setTradeError("The liquidity account is not authorized to take this trade. From the project folder run: pnpm reauthorize:lp");
+        } else if (line.includes("0x15")) {
+          setTradeError("This market is closed to new positions.");
         } else {
           setTradeError(line);
         }
@@ -403,6 +415,11 @@ export function Terminal({ market }: { market: Market }) {
         try {
           await refreshAccountAndPosition();
         } catch {}
+        return;
+      }
+
+      if (fullMsg.includes("0x15") || fullMsg.includes("Custom: 21")) {
+        setTradeError("This market is closed to new positions.");
         return;
       }
 
