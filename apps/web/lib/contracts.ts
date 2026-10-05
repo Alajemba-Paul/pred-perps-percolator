@@ -25,6 +25,24 @@ export const DEVNET_DEPLOYMENT = {
   tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
 };
 
+let lpConfigLoaded = false;
+
+/** The old LP key was not saved, so a replacement is published at /lp.json. */
+export async function loadLpConfig(): Promise<void> {
+  if (lpConfigLoaded || typeof window === "undefined") return;
+  lpConfigLoaded = true;
+  try {
+    const res = await fetch("/lp.json", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (typeof data.lpPortfolio === "string") DEVNET_DEPLOYMENT.lpPortfolio = data.lpPortfolio;
+    if (typeof data.matcherContext === "string") DEVNET_DEPLOYMENT.matcherContext = data.matcherContext;
+    if (typeof data.matcherDelegate === "string") DEVNET_DEPLOYMENT.matcherDelegate = data.matcherDelegate;
+  } catch {
+    // The checked-in LP stays in place until reauthorize:lp writes this file.
+  }
+}
+
 export const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 

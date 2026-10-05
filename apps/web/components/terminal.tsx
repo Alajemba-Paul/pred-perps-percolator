@@ -21,6 +21,7 @@ import {
   buildTradeCpiData,
   readMatcherControl,
   readMaxMarketSlots,
+  loadLpConfig,
 } from "@/lib/contracts";
 import { useUnifiedWallet } from "./wallet-providers";
 import {
@@ -203,6 +204,7 @@ export function Terminal({ market }: { market: Market }) {
 
     try {
       const percolatorProgramId = new PublicKey(DEVNET_DEPLOYMENT.percolatorProgramId);
+      await loadLpConfig();
       const marketAccount = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
       const userPortfolioPubkey = await deriveUserPortfolioAddress(activePubkey);
       const lpPortfolioPubkey = new PublicKey(DEVNET_DEPLOYMENT.lpPortfolio);
@@ -345,7 +347,7 @@ export function Terminal({ market }: { market: Market }) {
         const failLog = [...simLogs].reverse().find((l) => l.includes("failed") || l.includes("Error:"));
         const line = failLog || "Trade simulation failed.";
         if (line.includes("0x8")) {
-          setTradeError("The liquidity account is not authorized to take this trade. " + line);
+          setTradeError("The liquidity account is not authorized to take this trade. From the project folder run: pnpm reauthorize:lp");
         } else {
           setTradeError(line);
         }

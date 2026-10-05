@@ -30,7 +30,8 @@
     "db:migrate": "node --experimental-strip-types packages/db/migrate.ts",
     "indexer:start": "node --experimental-strip-types services/indexer/src/server.ts",
     "keeper:prices": "node scripts/keeper-price-feed.mjs",
-    "keeper:prices:once": "node scripts/keeper-price-feed.mjs --once"
+    "keeper:prices:once": "node scripts/keeper-price-feed.mjs --once",
+    "reauthorize:lp": "node scripts/reauthorize-lp.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
