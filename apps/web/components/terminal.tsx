@@ -9,6 +9,7 @@ import {
   TransactionInstruction,
   ComputeBudgetProgram,
   LAMPORTS_PER_SOL,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import { Buffer } from "buffer";
 import { type Market, formatPrice } from "@/lib/markets";
@@ -336,7 +337,7 @@ export function Terminal({ market }: { market: Market }) {
       tx.recentBlockhash = latestBlockhash.blockhash;
       tx.feePayer = activePubkey;
 
-      const sim = await connection.simulateTransaction(tx, {
+      const sim = await connection.simulateTransaction(new VersionedTransaction(tx.compileMessage()), {
         sigVerify: false,
         replaceRecentBlockhash: true,
         commitment: "confirmed",
