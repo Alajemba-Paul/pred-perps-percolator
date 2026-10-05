@@ -19,6 +19,7 @@ import {
   decodePortfolioSummary,
   decodeMarketAssetSlot,
   buildTradeCpiData,
+  readMatcherControl,
 } from "@/lib/contracts";
 import { useUnifiedWallet } from "./wallet-providers";
 import {
@@ -209,12 +210,19 @@ export function Terminal({ market }: { market: Market }) {
       const matcherDelegatePubkey = new PublicKey(DEVNET_DEPLOYMENT.matcherDelegate);
 
       // 1. Read market generation, asset index, portfolio epochs, and blockhash in the same flow (no stale cache)
-      const [marketAccInfo, userAccInfo, lpAccInfo, latestBlockhash] = await Promise.all([
+      const [marketAccInfo, userAccInfo, lpAccInfo, matcherCtxInfo, latestBlockhash] = await Promise.all([
         connection.getAccountInfo(marketAccount, "confirmed"),
         connection.getAccountInfo(userPortfolioPubkey, "confirmed"),
         connection.getAccountInfo(lpPortfolioPubkey, "confirmed"),
+        connection.getAccountInfo(matcherContextPubkey, "confirmed"),
         connection.getLatestBlockhash("confirmed"),
       ]);
+
+      if (!matcherCtxInfo || matcherCtxInfo.executable || matcherCtxInfo.data.length < 64 || !matcherCtxInfo.owner.equals(matcherProgramId)) {
+        setTradeError("Matcher context is not owned by the matcher program.");
+        setIsSubmitting(false);
+        return;
+      }
 
       if (!marketAccInfo || marketAccInfo.data.length < 464 + 726) {
         throw new Error("Market account not found or invalid on Solana Devnet.");
@@ -229,16 +237,20 @@ export function Terminal({ market }: { market: Market }) {
       // 2. Decode user portfolio
       const userDecoded = decodePortfolioSummary(userAccInfo.data);
       const traderPortfolioId = userDecoded.portfolioId;
-      const traderPositionEpoch = userDecoded.positionEpoch;
+      const traderControl = readMatcherControl(userAccInfo.data);
+      const traderPositionEpoch = traderControl?.positionEpoch ?? userDecoded.positionEpoch;
 
       let lpPortfolioId = 2n;
       let lpPositionEpoch = 2n;
       let lpMatcherSequence = 2n;
+      let lpFeeCapBps = 10_000;
       if (lpAccInfo && lpAccInfo.data.length >= DEVNET_DEPLOYMENT.portfolioAccountLen) {
         const lpDecoded = decodePortfolioSummary(lpAccInfo.data);
+        const lpControl = readMatcherControl(lpAccInfo.data);
         lpPortfolioId = lpDecoded.portfolioId;
-        lpPositionEpoch = lpDecoded.positionEpoch;
+        lpPositionEpoch = lpControl?.positionEpoch ?? lpDecoded.positionEpoch;
         lpMatcherSequence = lpDecoded.sequence;
+        lpFeeCapBps = lpControl?.feeCapBps ?? 10_000;
       }
 
       const rawIndex = Number(market.assetIndex);
@@ -252,11 +264,6 @@ export function Terminal({ market }: { market: Market }) {
         : usable(chainSlot.targetPrice)
           ? chainSlot.targetPrice
           : 0n;
-      const markE6 = chainPrice !== 0n
-        ? chainPrice
-        : usable(indexerMark)
-          ? indexerMark
-          : 0n;
       console.log(
         "price decode",
         "assetIndex", targetAssetIndex,
@@ -264,21 +271,23 @@ export function Terminal({ market }: { market: Market }) {
         "targetPrice", chainSlot.targetPrice.toString(),
         "indexerMark", indexerMark.toString(),
       );
-      if (markE6 === 0n) {
+      if (chainPrice === 0n) {
         setTradeError("This market has no usable price yet.");
         setIsSubmitting(false);
         return;
       }
+      if (30 > lpFeeCapBps) {
+        setTradeError(`Market fee is above the LP cap (${lpFeeCapBps} bps).`);
+        setIsSubmitting(false);
+        return;
+      }
 
-      // Engine size is 1_000_000 per unit. Dollar notional times 1_000_000 overflows (error 0xf).
-      const units = BigInt(Math.max(1, Math.min(5, Math.floor(numSizeUsdc))));
-      const sizeQ = units * 1_000_000n;
+      const sizeQ = 1_000_000n;
       const signedSizeQ = side === "Long" ? sizeQ : -sizeQ;
       const slack = 50_000n;
-      const limitBase = chainPrice !== 0n ? chainPrice : markE6;
       const limitPriceE6 = side === "Long"
-        ? (limitBase + slack > 999_999n ? 999_999n : limitBase + slack)
-        : (limitBase > slack ? limitBase - slack : 1n);
+        ? (chainPrice + slack > 999_999n ? 999_999n : chainPrice + slack)
+        : (chainPrice > slack ? chainPrice - slack : 1n);
 
       const tradeData = buildTradeCpiData({
         traderPortfolioId,
@@ -294,7 +303,7 @@ export function Terminal({ market }: { market: Market }) {
         backingFeeCapBps: 0,
       });
 
-      console.log("Instruction: TradeCpi, sizeQ:", signedSizeQ.toString(), "limit:", limitPriceE6.toString(), "mark:", markE6.toString());
+      console.log("Instruction: TradeCpi, sizeQ:", signedSizeQ.toString(), "limit:", limitPriceE6.toString(), "mark:", chainPrice.toString());
 
       const tx = new Transaction();
       tx.add(ComputeBudgetProgram.requestHeapFrame({ bytes: 128 * 1024 }));
@@ -318,7 +327,20 @@ export function Terminal({ market }: { market: Market }) {
       tx.recentBlockhash = latestBlockhash.blockhash;
       tx.feePayer = activePubkey;
 
-      // 6. Submit transaction
+      const sim = await connection.simulateTransaction(tx, {
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+        commitment: "confirmed",
+      });
+      const simLogs = sim.value.logs ?? [];
+      console.log("Transaction logs:", simLogs);
+      if (sim.value.err) {
+        const failLog = [...simLogs].reverse().find((l) => l.includes("failed") || l.includes("Error:"));
+        setTradeError(failLog || "Trade simulation failed.");
+        setIsSubmitting(false);
+        return;
+      }
+
       const sig = await wallet.signAndSendTransaction(tx, connection);
       setTxSignature(sig);
       await refreshAccountAndPosition();
@@ -399,7 +421,7 @@ export function Terminal({ market }: { market: Market }) {
       if (fullMsg.includes("0x9") || fullMsg.includes("Custom: 9")) {
         const ix = fullMsg.match(/Instruction (\d+)/);
         const where = ix ? `instruction ${ix[1]}` : "trade";
-        setTradeError(logLine ? `Invalid instruction on ${where} (${logLine})` : `Invalid instruction on ${where}`);
+        setTradeError(logLine ? `${logLine}` : `Invalid instruction on ${where}: ${rawMsg}`);
         return;
       }
 

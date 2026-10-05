@@ -320,13 +320,14 @@ export function decodeMarketAssetSlot(data: Uint8Array, assetIndex: number): Mar
     throw new Error("Asset index " + assetIndex + " out of bounds in market account");
   }
   const v = view(data);
-  // AssetStateV16Account is repr(C): u64, u64, u8, then 7 bytes of padding so the next u64 is aligned.
+  // Deployed AssetStateV16Account is packed: u64, u64, u8, then the price words.
+  // There is no alignment padding. A probability in (0, 1_000_000) sits at +17 and +25.
   return {
     marketId: v.getBigUint64(engineOffset, true),
     retiredSlot: v.getBigUint64(engineOffset + 8, true),
     lifecycle: data[engineOffset + 16],
-    targetPrice: v.getBigUint64(engineOffset + 24, true),
-    effectivePrice: v.getBigUint64(engineOffset + 32, true),
+    targetPrice: v.getBigUint64(engineOffset + 17, true),
+    effectivePrice: v.getBigUint64(engineOffset + 25, true),
   };
 }
 
@@ -337,6 +338,20 @@ export function decodeMarketHeader(data: Uint8Array): { nextMarketId: bigint } {
   const v = view(data);
   return {
     nextMarketId: v.getBigUint64(1013, true),
+  };
+}
+
+/** Matcher control word. Bit 0 enabled, bits 1..49 position epoch, bits 50..63 fee cap. */
+export const MATCHER_CONTROL_OFF = 9531;
+
+export function readMatcherControl(data: Uint8Array): { enabled: boolean; positionEpoch: bigint; feeCapBps: number } | null {
+  if (data.length < MATCHER_CONTROL_OFF + 8) return null;
+  const control = view(data).getBigUint64(MATCHER_CONTROL_OFF, true);
+  const epochMask = (1n << 49n) - 1n;
+  return {
+    enabled: (control & 1n) === 1n,
+    positionEpoch: (control >> 1n) & epochMask,
+    feeCapBps: Number((control >> 50n) & 0x3fffn),
   };
 }
 
