@@ -20,6 +20,7 @@ import {
   decodeMarketAssetSlot,
   buildTradeCpiData,
   readMatcherControl,
+  readMaxMarketSlots,
 } from "@/lib/contracts";
 import { useUnifiedWallet } from "./wallet-providers";
 import {
@@ -258,6 +259,12 @@ export function Terminal({ market }: { market: Market }) {
       const chainSlot = decodeMarketAssetSlot(marketAccInfo.data, targetAssetIndex);
       const freshMarketId = chainSlot.marketId;
       const indexerMark = BigInt(Math.round((market.currentPrice || 0) * 1_000_000));
+      const maxSlots = readMaxMarketSlots(marketAccInfo.data);
+      if (targetAssetIndex >= maxSlots || chainSlot.marketId === 0n) {
+        setTradeError("This market is not on the devnet book.");
+        setIsSubmitting(false);
+        return;
+      }
       const usable = (p: bigint) => p > 0n && p < 1_000_000n;
       const chainPrice = usable(chainSlot.effectivePrice)
         ? chainSlot.effectivePrice
@@ -336,7 +343,12 @@ export function Terminal({ market }: { market: Market }) {
       console.log("Transaction logs:", simLogs);
       if (sim.value.err) {
         const failLog = [...simLogs].reverse().find((l) => l.includes("failed") || l.includes("Error:"));
-        setTradeError(failLog || "Trade simulation failed.");
+        const line = failLog || "Trade simulation failed.";
+        if (line.includes("0x8")) {
+          setTradeError("The liquidity account is not authorized to take this trade. " + line);
+        } else {
+          setTradeError(line);
+        }
         setIsSubmitting(false);
         return;
       }

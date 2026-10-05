@@ -88,7 +88,14 @@ export async function GET() {
 
         return m;
       })
-      .filter((m) => Number(m.status) !== 4 && Number(m.closeTime || 0) >= CUTOFF_TIMESTAMP_SEC);
+      .filter((m) => {
+        const assetIndex = Number(m.assetIndex);
+        return Number(m.status) !== 4
+          && Number(m.closeTime || 0) >= CUTOFF_TIMESTAMP_SEC
+          && Number.isInteger(assetIndex)
+          && assetIndex >= 0
+          && assetIndex < 2;
+      });
 
     upsertMarketsCache(results).catch(() => {});
     return NextResponse.json(results, {

@@ -269,25 +269,8 @@ export class MoxieIndexer {
           });
         }
       } else {
-        // Slot has no onchain record: populate with distinct candidate closing >= Oct 5 2026
-        const mark = String(candidate.initialMarkE6 || 500000);
-        const closeTimeSec = String(
-          candidate.closeTimeMs ? Math.floor(candidate.closeTimeMs / 1000) : 1791172800
-        );
-        this.store.upsertMarket({
-          address: candidate.providerMarketId || ("moxie-market-slot-" + idx),
-          providerMarketId: candidate.providerMarketId || ("POLY-slot-" + idx),
-          title: candidate.title,
-          rules: candidate.rules || "Prediction perpetual market on Solana Devnet.",
-          slot,
-          assetIndex: idx,
-          marketId: (record && m ? m.marketId.toString() : String(idx + 1)),
-          status: 1, // Active, tradable
-          markE6: mark,
-          indexE6: mark,
-          closeTime: closeTimeSec,
-          oracleUpdatedAt: String(Math.floor(Date.now() / 1000)),
-        });
+        // No on-chain asset in this slot. Do not advertise it as a tradable market.
+        continue;
       }
     }
 

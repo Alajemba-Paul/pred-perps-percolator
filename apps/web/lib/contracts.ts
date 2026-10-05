@@ -355,6 +355,13 @@ export function readMatcherControl(data: Uint8Array): { enabled: boolean; positi
   };
 }
 
+/** Packed engine config: max_market_slots is the u32 at byte 498. Indexes at or above it are InvalidInstruction (0x9). */
+export function readMaxMarketSlots(data: Uint8Array): number {
+  if (data.length < 502) return 2;
+  const n = view(data).getUint32(498, true);
+  return n > 0 && n <= 64 ? n : 2;
+}
+
 export type FreshChainState = {
   blockhash: string;
   lastValidBlockHeight: number;
