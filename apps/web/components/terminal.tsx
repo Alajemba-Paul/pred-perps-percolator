@@ -242,11 +242,27 @@ export function Terminal({ market }: { market: Market }) {
         lpMatcherSequence = lpDecoded.sequence;
       }
 
-      const targetAssetIndex = Number(market.assetIndex) || 1;
+      const rawIndex = Number(market.assetIndex);
+      const targetAssetIndex = Number.isInteger(rawIndex) && rawIndex >= 0 ? rawIndex : 0;
       const chainSlot = decodeMarketAssetSlot(marketAccInfo.data, targetAssetIndex);
       const freshMarketId = chainSlot.marketId;
-      const markE6 = chainSlot.effectivePrice > 0n ? chainSlot.effectivePrice : chainSlot.targetPrice;
-      if (markE6 <= 0n || markE6 >= 1_000_000n) {
+      const indexerMark = BigInt(Math.round((market.currentPrice || 0) * 1_000_000));
+      const usable = (p: bigint) => p > 0n && p < 1_000_000n;
+      const markE6 = usable(chainSlot.effectivePrice)
+        ? chainSlot.effectivePrice
+        : usable(chainSlot.targetPrice)
+          ? chainSlot.targetPrice
+          : usable(indexerMark)
+            ? indexerMark
+            : 0n;
+      console.log(
+        "price decode",
+        "assetIndex", targetAssetIndex,
+        "effectivePrice", chainSlot.effectivePrice.toString(),
+        "targetPrice", chainSlot.targetPrice.toString(),
+        "indexerMark", indexerMark.toString(),
+      );
+      if (markE6 === 0n) {
         setTradeError("This market has no usable price yet.");
         setIsSubmitting(false);
         return;

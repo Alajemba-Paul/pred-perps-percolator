@@ -320,12 +320,13 @@ export function decodeMarketAssetSlot(data: Uint8Array, assetIndex: number): Mar
     throw new Error("Asset index " + assetIndex + " out of bounds in market account");
   }
   const v = view(data);
+  // AssetStateV16Account is repr(C): u64, u64, u8, then 7 bytes of padding so the next u64 is aligned.
   return {
     marketId: v.getBigUint64(engineOffset, true),
     retiredSlot: v.getBigUint64(engineOffset + 8, true),
     lifecycle: data[engineOffset + 16],
-    targetPrice: v.getBigUint64(engineOffset + 17, true),
-    effectivePrice: v.getBigUint64(engineOffset + 25, true),
+    targetPrice: v.getBigUint64(engineOffset + 24, true),
+    effectivePrice: v.getBigUint64(engineOffset + 32, true),
   };
 }
 
