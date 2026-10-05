@@ -4,7 +4,7 @@
   type Market,
   toMarket,
 } from "./markets";
-import { listOpenChainMarkets } from "./open-markets";
+import { listLiveJupiterMarkets } from "./jupiter-live";
 import { DEVNET_DEPLOYMENT, decodePortfolioSummary, decodeImportedMarket } from "./contracts";
 import { Connection, PublicKey } from "@solana/web3.js";
 import fs from "fs";
@@ -114,104 +114,39 @@ export type { ApiPortfolio, ApiMarket, Market };
  * falling back to on-chain Devnet state.
  */
 export async function getMarkets(): Promise<Market[]> {
-  const open = await listOpenChainMarkets();
-  if (open) return open.map(toMarket);
-
-  const indexerUrl = getIndexerUrl();
-
-  // 1. On server: direct fetch to Render indexer (avoids extra proxy round-trip)
-  if (!isBrowser && indexerUrl) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(`${indexerUrl}/v1/markets`, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data: ApiMarket[] = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          return data.map(toMarket);
-        }
-      }
-    } catch (err) {
-      console.warn(`Direct server fetch to ${indexerUrl}/v1/markets failed:`, err);
-    }
+  if (!isBrowser) {
+    const live = await listLiveJupiterMarkets();
+    if (live.length > 0) return live.map(toMarket);
   }
 
-  // 2. In browser (or server fallback): internal proxy /api/indexer/markets
   try {
     const url = isBrowser ? "/api/indexer/markets" : `${getBaseUrl()}/api/indexer/markets`;
     const res = await fetch(url, { cache: "no-store" });
     if (res.ok) {
       const data: ApiMarket[] = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data.map(toMarket);
-      }
+      if (Array.isArray(data) && data.length > 0) return data.map(toMarket);
     }
   } catch (e) {
     console.warn("Failed fetching from /api/indexer/markets:", e);
   }
 
-  // 3. Fallback to direct Devnet RPC query
-  return await getDevnetOnchainMarkets();
+  return [];
 }
 
 /**
  * Fetch a specific market by slug/address/id.
  */
 export async function getMarket(address: string): Promise<Market | null> {
-  const open = await listOpenChainMarkets();
-  if (open) {
-    const markets = open.map(toMarket);
-    return (
-      markets.find(
-        (m) => m.slug === address || m.address === address || m.marketId === address || m.providerMarketId === address,
-      ) ?? null
-    );
-  }
-
-  const indexerUrl = getIndexerUrl();
-
-  // On server: try direct fetch for specific market
-  if (!isBrowser && indexerUrl && address) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(`${indexerUrl}/v1/markets/${encodeURIComponent(address)}`, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.address) {
-          return toMarket(data);
-        }
-      }
-    } catch {
-      // ignore and check full list
-    }
-  }
-
   const markets = await getMarkets();
-  const found = markets.find(
-    (m) =>
-      m.slug === address ||
-      m.address === address ||
-      m.marketId === address ||
-      m.providerMarketId === address
+  return (
+    markets.find(
+      (m) =>
+        m.slug === address ||
+        m.address === address ||
+        m.marketId === address ||
+        m.providerMarketId === address,
+    ) ?? null
   );
-  if (found) return found;
-
-  // If queried by the default deployment record, try direct fetch
-  if (address === DEVNET_DEPLOYMENT.importedRecord) {
-    const fallbackList = await getDevnetOnchainMarkets();
-    if (fallbackList.length > 0) return fallbackList[0];
-  }
-
-  return null;
 }
 
 export async function getPortfolio(address: string): Promise<ApiPortfolio | null> {

@@ -35,15 +35,16 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
     }
   }
 
-  // Filter: Only active, tradable prediction markets closing on or after 5 October 2026
-  // Cutoff: 1791158400 (2026-10-05T00:00:00Z)
+  const latestClose = Date.parse("2026-10-30T23:59:59Z");
   const tradableMarkets = markets.filter((m) => {
     const isActive = m.status === "active" || m.status === 1;
     const isSpecialSlot =
       m.title.startsWith("Unused Slot") ||
       m.title.startsWith("Percolator Collateral") ||
+      m.title.startsWith("Open market #") ||
       m.title.includes("(Record #1)");
-    return isActive && !isSpecialSlot;
+    const closeMs = m.closeTime ? new Date(m.closeTime).getTime() : 0;
+    return isActive && !isSpecialSlot && closeMs > Date.now() && closeMs <= latestClose;
   });
 
   return (
@@ -154,7 +155,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                   <div>
                     <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)", marginBottom: "2px" }}>Long Price</small>
                     <strong style={{ fontSize: "15px", color: "#c7ff4a" }}>
-                      {longCents}¢</strong>
+                      {longCents}¢{market.stale ? " stale" : ""}</strong>
                   </div>
 
                   <div>
@@ -175,7 +176,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
           })
         ) : (
           <div style={{ textAlign: "center", padding: "40px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "8px", color: "rgba(255,255,255,0.5)" }}>
-            No active markets currently available.
+            No open Jupiter markets close by 30 October 2026.
           </div>
         )}
       </div>

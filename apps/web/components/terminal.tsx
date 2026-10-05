@@ -157,8 +157,40 @@ export function Terminal({ market }: { market: Market }) {
     return () => clearInterval(interval);
   }, [refreshAccountAndPosition]);
 
-  // Pricing calculations
-  const longMark = market.currentPrice;
+  const [quote, setQuote] = useState(market);
+
+  useEffect(() => {
+    let stop = false;
+    async function refreshPrice() {
+      try {
+        const res = await fetch("/api/indexer/markets", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!Array.isArray(data)) return;
+        const { toMarket } = await import("@/lib/markets");
+        const next = data
+          .map(toMarket)
+          .find(
+            (row) =>
+              row.address === market.address ||
+              row.providerMarketId === market.providerMarketId ||
+              row.slug === market.slug,
+          );
+        if (!stop && next) setQuote(next);
+      } catch {
+        // keep the last Jupiter price
+      }
+    }
+    refreshPrice();
+    const timer = setInterval(refreshPrice, 10000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [market.address, market.providerMarketId, market.slug]);
+
+  // Pricing calculations. The displayed price is the live Jupiter midpoint.
+  const longMark = quote.currentPrice;
   const shortMark = Math.max(0, 1 - longMark);
   const longCents = Math.round(longMark * 100);
   const shortCents = Math.max(0, 100 - longCents);
@@ -175,6 +207,11 @@ export function Terminal({ market }: { market: Market }) {
   // Execute trade (Single click handler, no page-load cache comparison)
   async function handleExecuteTrade() {
     if (isSubmitting) return;
+
+    if (!/^\d+$/.test(String(market.marketId))) {
+      setTradeError("This event is not imported on devnet yet.");
+      return;
+    }
 
     // Do not submit if the market is not active
     if (market.status !== "active" && market.status !== 1) {
@@ -489,7 +526,7 @@ export function Terminal({ market }: { market: Market }) {
           <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
             <div style={{ textAlign: "right" }}>
               <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Long Price</small>
-              <strong style={{ fontSize: "20px", color: "#c7ff4a" }}>{longCents}¢</strong>
+              <strong style={{ fontSize: "20px", color: "#c7ff4a" }}>{longCents}¢{quote.stale ? " stale" : ""}</strong>
             </div>
             <div style={{ textAlign: "right" }}>
               <small style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Short Price</small>

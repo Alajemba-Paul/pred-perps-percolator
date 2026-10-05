@@ -22,6 +22,7 @@ export type Market = {
   oracleUpdatedAt: string;
   rules?: string;
   providerMarketId?: string;
+  stale?: boolean;
   symbol?: string;
   underlyingAsset?: string;
   contractSize?: number;
@@ -87,6 +88,10 @@ export type ApiMarket = {
   indexE6: string;
   closeTime: string;
   oracleUpdatedAt: string;
+  providerEventId?: string;
+  yesBidE6?: string;
+  yesAskE6?: string;
+  stale?: boolean;
 };
 
 export const cents = (e6: string | number | bigint) => Number(e6) / 10_000;
@@ -256,6 +261,7 @@ export function toMarket(x: ApiMarket): Market {
     oracleUpdatedAt: x.oracleUpdatedAt,
     rules,
     providerMarketId: x.providerMarketId,
+    stale: x.stale,
     book: {
       yesBid: Math.max(0.01, yesMark - 0.01),
       yesAsk: Math.min(0.99, yesMark + 0.01),
