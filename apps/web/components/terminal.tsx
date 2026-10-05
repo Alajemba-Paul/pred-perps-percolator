@@ -18,7 +18,6 @@ import {
   getUserAta,
   decodePortfolioSummary,
   decodeMarketAssetSlot,
-  buildPermissionlessCrankData,
   buildTradeCpiData,
 } from "@/lib/contracts";
 import { useUnifiedWallet } from "./wallet-providers";
@@ -248,13 +247,16 @@ export function Terminal({ market }: { market: Market }) {
       const freshMarketId = chainSlot.marketId;
       const indexerMark = BigInt(Math.round((market.currentPrice || 0) * 1_000_000));
       const usable = (p: bigint) => p > 0n && p < 1_000_000n;
-      const markE6 = usable(chainSlot.effectivePrice)
+      const chainPrice = usable(chainSlot.effectivePrice)
         ? chainSlot.effectivePrice
         : usable(chainSlot.targetPrice)
           ? chainSlot.targetPrice
-          : usable(indexerMark)
-            ? indexerMark
-            : 0n;
+          : 0n;
+      const markE6 = chainPrice !== 0n
+        ? chainPrice
+        : usable(indexerMark)
+          ? indexerMark
+          : 0n;
       console.log(
         "price decode",
         "assetIndex", targetAssetIndex,
@@ -273,9 +275,10 @@ export function Terminal({ market }: { market: Market }) {
       const sizeQ = units * 1_000_000n;
       const signedSizeQ = side === "Long" ? sizeQ : -sizeQ;
       const slack = 50_000n;
+      const limitBase = chainPrice !== 0n ? chainPrice : markE6;
       const limitPriceE6 = side === "Long"
-        ? (markE6 + slack > 999_999n ? 999_999n : markE6 + slack)
-        : (markE6 > slack ? markE6 - slack : 1n);
+        ? (limitBase + slack > 999_999n ? 999_999n : limitBase + slack)
+        : (limitBase > slack ? limitBase - slack : 1n);
 
       const tradeData = buildTradeCpiData({
         traderPortfolioId,
@@ -287,7 +290,7 @@ export function Terminal({ market }: { market: Market }) {
         marketId: freshMarketId,
         sizeQ: signedSizeQ,
         limitPriceE6,
-        feeBps: 30n,
+        feeBps: 0n,
         backingFeeCapBps: 0,
       });
 
@@ -296,17 +299,6 @@ export function Terminal({ market }: { market: Market }) {
       const tx = new Transaction();
       tx.add(ComputeBudgetProgram.requestHeapFrame({ bytes: 128 * 1024 }));
       tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
-      tx.add(
-        new TransactionInstruction({
-          programId: percolatorProgramId,
-          keys: [
-            { pubkey: activePubkey, isSigner: false, isWritable: false },
-            { pubkey: marketAccount, isSigner: false, isWritable: true },
-            { pubkey: userPortfolioPubkey, isSigner: false, isWritable: true },
-          ],
-          data: Buffer.from(buildPermissionlessCrankData(0n, [targetAssetIndex])),
-        })
-      );
       tx.add(
         new TransactionInstruction({
           programId: percolatorProgramId,
@@ -401,6 +393,13 @@ export function Terminal({ market }: { market: Market }) {
 
       if (fullMsg.includes("0xf") || fullMsg.includes("Custom: 15")) {
         setTradeError(logLine ? `Trade size overflowed the risk math (${logLine})` : "Trade size overflowed the risk math.");
+        return;
+      }
+
+      if (fullMsg.includes("0x9") || fullMsg.includes("Custom: 9")) {
+        const ix = fullMsg.match(/Instruction (\d+)/);
+        const where = ix ? `instruction ${ix[1]}` : "trade";
+        setTradeError(logLine ? `Invalid instruction on ${where} (${logLine})` : `Invalid instruction on ${where}`);
         return;
       }
 
