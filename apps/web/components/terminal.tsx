@@ -7,6 +7,7 @@ import {
   PublicKey,
   Transaction,
   TransactionInstruction,
+  ComputeBudgetProgram,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import { Buffer } from "buffer";
@@ -17,7 +18,7 @@ import {
   getUserAta,
   decodePortfolioSummary,
   decodeMarketAssetSlot,
-  fetchFreshChainState,
+  buildPermissionlessCrankData,
   buildTradeCpiData,
 } from "@/lib/contracts";
 import { useUnifiedWallet } from "./wallet-providers";
@@ -194,10 +195,6 @@ export function Terminal({ market }: { market: Market }) {
       setTradeError("Please enter a valid trade amount in USDC.");
       return;
     }
-    if ((usdcBalance ?? 0) < numSizeUsdc) {
-      setTradeError(`Insufficient test USDC balance (${(usdcBalance ?? 0).toFixed(2)} available).`);
-      return;
-    }
 
     setIsSubmitting(true);
     setTradeError(null);
@@ -235,7 +232,6 @@ export function Terminal({ market }: { market: Market }) {
       const traderPortfolioId = userDecoded.portfolioId;
       const traderPositionEpoch = userDecoded.positionEpoch;
 
-      // 3. Decode LP portfolio
       let lpPortfolioId = 2n;
       let lpPositionEpoch = 2n;
       let lpMatcherSequence = 2n;
@@ -246,15 +242,24 @@ export function Terminal({ market }: { market: Market }) {
         lpMatcherSequence = lpDecoded.sequence;
       }
 
-      // 4. Decode the asset slot directly from the fresh market account onchain (no cache comparison)
       const targetAssetIndex = Number(market.assetIndex) || 1;
       const chainSlot = decodeMarketAssetSlot(marketAccInfo.data, targetAssetIndex);
       const freshMarketId = chainSlot.marketId;
+      const markE6 = chainSlot.effectivePrice > 0n ? chainSlot.effectivePrice : chainSlot.targetPrice;
+      if (markE6 <= 0n || markE6 >= 1_000_000n) {
+        setTradeError("This market has no usable price yet.");
+        setIsSubmitting(false);
+        return;
+      }
 
-      // 5. Build trade parameters: Long = positive size, Short = negative size
-      const sizeMicroUnits = BigInt(Math.floor(estimatedContracts * 1_000_000));
-      const signedSizeQ = side === "Long" ? sizeMicroUnits : -sizeMicroUnits;
-      const limitPriceE6 = BigInt(Math.round(activeMark * 1_000_000));
+      // Engine size is 1_000_000 per unit. Dollar notional times 1_000_000 overflows (error 0xf).
+      const units = BigInt(Math.max(1, Math.min(5, Math.floor(numSizeUsdc))));
+      const sizeQ = units * 1_000_000n;
+      const signedSizeQ = side === "Long" ? sizeQ : -sizeQ;
+      const slack = 50_000n;
+      const limitPriceE6 = side === "Long"
+        ? (markE6 + slack > 999_999n ? 999_999n : markE6 + slack)
+        : (markE6 > slack ? markE6 - slack : 1n);
 
       const tradeData = buildTradeCpiData({
         traderPortfolioId,
@@ -270,14 +275,27 @@ export function Terminal({ market }: { market: Market }) {
         backingFeeCapBps: 0,
       });
 
-      console.log("Instruction: TradeCpi, sizeQ:", signedSizeQ.toString(), "marketId:", freshMarketId.toString());
+      console.log("Instruction: TradeCpi, sizeQ:", signedSizeQ.toString(), "limit:", limitPriceE6.toString(), "mark:", markE6.toString());
 
       const tx = new Transaction();
+      tx.add(ComputeBudgetProgram.requestHeapFrame({ bytes: 128 * 1024 }));
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
       tx.add(
         new TransactionInstruction({
           programId: percolatorProgramId,
           keys: [
-            { pubkey: activePubkey, isSigner: true, isWritable: true },
+            { pubkey: activePubkey, isSigner: false, isWritable: false },
+            { pubkey: marketAccount, isSigner: false, isWritable: true },
+            { pubkey: userPortfolioPubkey, isSigner: false, isWritable: true },
+          ],
+          data: Buffer.from(buildPermissionlessCrankData(0n, [targetAssetIndex])),
+        })
+      );
+      tx.add(
+        new TransactionInstruction({
+          programId: percolatorProgramId,
+          keys: [
+            { pubkey: activePubkey, isSigner: true, isWritable: false },
             { pubkey: marketAccount, isSigner: false, isWritable: true },
             { pubkey: userPortfolioPubkey, isSigner: false, isWritable: true },
             { pubkey: lpPortfolioPubkey, isSigner: false, isWritable: true },
@@ -362,6 +380,11 @@ export function Terminal({ market }: { market: Market }) {
 
       if (is0xc) {
         setTradeError(logLine ? `Wrong market vault (${logLine})` : "Wrong market vault");
+        return;
+      }
+
+      if (fullMsg.includes("0xf") || fullMsg.includes("Custom: 15")) {
+        setTradeError(logLine ? `Trade size overflowed the risk math (${logLine})` : "Trade size overflowed the risk math.");
         return;
       }
 
@@ -538,7 +561,7 @@ export function Terminal({ market }: { market: Market }) {
           {tradeError && (
             <div style={{ background: "rgba(255,77,77,0.1)", border: "1px solid rgba(255,77,77,0.3)", borderRadius: "6px", padding: "10px", fontSize: "12px", color: "#ff8474", display: "flex", alignItems: "center", gap: "6px" }}>
               <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tradeError}</span>
+              <span style={{ whiteSpace: "normal" }}>{tradeError}</span>
             </div>
           )}
 

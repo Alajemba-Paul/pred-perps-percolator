@@ -98,6 +98,18 @@ export function buildTradeCpiData(r: TradeRequest): Uint8Array {
   return b;
 }
 
+export function buildPermissionlessCrankData(nowSlot: bigint, assets: readonly number[]): Uint8Array {
+  if (assets.length > 16) throw new Error("too many crank observations");
+  const b = out(5, 10 + assets.length * 3), v = view(b);
+  u64(v, 1, nowSlot);
+  b[9] = assets.length;
+  assets.forEach((a, i) => {
+    u16(v, 10 + i * 3, a);
+    b[12 + i * 3] = 0;
+  });
+  return b;
+}
+
 // Exact layout matching vendor/percolator-prog @ 4b974f1 (77 bytes):
 export function buildTradeNoCpiData(r: {
   accountAPortfolioId: bigint;
