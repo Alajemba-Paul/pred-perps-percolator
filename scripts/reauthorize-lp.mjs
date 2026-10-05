@@ -13,7 +13,6 @@ const {
   Transaction,
   TransactionInstruction,
   ComputeBudgetProgram,
-  sendAndConfirmTransaction,
 } = require("@solana/web3.js");
 
 const PERCOLATOR = new PublicKey("Cerk8WwzTJY9YVF9SaHCtUjG15jNGHN26iqyNeUETqnC");
@@ -77,9 +76,27 @@ async function send(connection, payer, ixs, signers) {
     ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
     ...ixs,
   );
-  const sig = await sendAndConfirmTransaction(connection, tx, [payer, ...signers], { commitment: "confirmed" });
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = payer.publicKey;
+  tx.sign(payer, ...signers);
+  const sig = await connection.sendRawTransaction(tx.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: "confirmed",
+  });
   console.log("signature", sig);
-  return sig;
+  for (let i = 0; i < 40; i++) {
+    const status = await connection.getSignatureStatuses([sig], { searchTransactionHistory: true });
+    const value = status.value[0];
+    if (value?.err) {
+      const found = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+      const line = found?.meta?.logMessages?.find((l) => l.includes("failed"));
+      throw new Error(line || JSON.stringify(value.err));
+    }
+    if (value && (value.confirmationStatus === "confirmed" || value.confirmationStatus === "finalized")) return sig;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error("timed out waiting for " + sig + ". The transaction may still land. Wait a minute and run this command again.");
 }
 
 loadEnvFile();
