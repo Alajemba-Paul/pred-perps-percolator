@@ -24,6 +24,8 @@ import {
   buildDepositData,
   buildCreatePortfolioData,
   createAssociatedTokenAccountInstruction,
+  readMarketCollateralMint,
+  canonicalCollateralVault,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@/lib/contracts";
@@ -316,8 +318,14 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
       const percolatorProgramId = new PublicKey(DEVNET_DEPLOYMENT.percolatorProgramId);
       const marketAccount = new PublicKey(DEVNET_DEPLOYMENT.marketAccount);
       const portfolioPubkey = await deriveUserPortfolioAddress(activePubkey);
-      const mintPubkey = new PublicKey(DEVNET_DEPLOYMENT.usdcMint);
-      const collateralVault = new PublicKey(DEVNET_DEPLOYMENT.collateralVault);
+
+      const marketInfo = await connection.getAccountInfo(marketAccount, "confirmed");
+      if (!marketInfo) {
+        setActionError("Market account not found on Solana Devnet.");
+        return;
+      }
+      const mintPubkey = readMarketCollateralMint(marketInfo.data);
+      const collateralVault = canonicalCollateralVault(marketAccount, mintPubkey, percolatorProgramId);
       const userAta = getUserAta(activePubkey, mintPubkey);
 
       // Verify onchain portfolio state
@@ -372,6 +380,10 @@ export function PortfolioView({ markets }: { markets: Market[] }) {
     } catch (err: any) {
       console.error("Deposit margin error:", err);
       const msg = err?.message || String(err);
+      if (msg.includes("0xc") || msg.includes("Custom: 12") || msg.includes("InvalidVaultAccount")) {
+        setActionError("Wrong market vault");
+        return;
+      }
       setActionError(msg.includes("Reconnect") ? "Reconnect wallet" : msg);
     } finally {
       setIsActionLoading(false);

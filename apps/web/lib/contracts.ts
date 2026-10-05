@@ -248,6 +248,25 @@ export function getUserAta(userPublicKey: PublicKey, mintPublicKey: PublicKey): 
   return ata;
 }
 
+/** WrapperConfig.collateral_mint sits at header(16) + marketauth(32). */
+export function readMarketCollateralMint(marketData: Uint8Array): PublicKey {
+  if (marketData.length < 80) throw new Error("market account too short to read collateral mint");
+  return new PublicKey(marketData.subarray(48, 80));
+}
+
+export function deriveVaultAuthority(market: PublicKey, programId = new PublicKey(DEVNET_DEPLOYMENT.percolatorProgramId)): PublicKey {
+  const [authority] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), market.toBuffer()],
+    programId,
+  );
+  return authority;
+}
+
+/** ATA of the vault-authority PDA. This is the only vault Percolator accepts. */
+export function canonicalCollateralVault(market: PublicKey, mint: PublicKey, programId?: PublicKey): PublicKey {
+  return getUserAta(deriveVaultAuthority(market, programId), mint);
+}
+
 export function createAssociatedTokenAccountInstruction(
   payer: PublicKey,
   associatedToken: PublicKey,

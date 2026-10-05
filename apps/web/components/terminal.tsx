@@ -354,6 +354,17 @@ export function Terminal({ market }: { market: Market }) {
         return;
       }
 
+      const is0xc =
+        fullMsg.includes("0xc") ||
+        fullMsg.includes("Custom: 12") ||
+        fullMsg.includes("InvalidVaultAccount") ||
+        /\bfailed: c\b/.test(fullMsg);
+
+      if (is0xc) {
+        setTradeError(logLine ? `Wrong market vault (${logLine})` : "Wrong market vault");
+        return;
+      }
+
       if (fullMsg.includes("Reconnect")) {
         setTradeError("Reconnect wallet");
         return;
