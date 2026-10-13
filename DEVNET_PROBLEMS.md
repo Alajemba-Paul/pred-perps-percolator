@@ -1,11 +1,13 @@
-# Problems in pred-perps-percolator
+# Problems in pred-perps-percolator (Moxie Devnet Demo)
 
-Reviewed against `main` at `a1d2d11` (10 October 2026).
+**Repo:** https://github.com/Alajemba-Paul/pred-perps-percolator
+**Demo:** https://moxie-devnet-demo.vercel.app
+**Reviewed against:** `main` at `6b8e7b4` (13 October 2026). The trade and deploy code is unchanged since `a1d2d11`.
 
 Two different “it did not land on devnet” failures are mixed together:
 
 1. A user clicks Long or Short, the wallet asks for a signature, and no confirmed devnet transaction shows up.
-2. `pnpm run deploy:devnet:live` prints success and writes nothing new on-chain. The Braves market in `deployments/jupiter-live-market.json` was never activated. The script exits 0 on purpose.
+2. `pnpm run deploy:devnet:live` prints success and writes nothing new on-chain. Markets are never activated. The script exits 0 on purpose.
 
 ## 1. A signed trade still does not land
 
@@ -31,7 +33,7 @@ Devnet blockhashes live about 60 to 90 seconds. The fresh blockhash is taken bef
 
 Preflight is on (`skipPreflight: false`). The RPC simulates again and refuses with “Blockhash not found”. The transaction is not broadcast. The user already signed.
 
-The retry only continues when the error text matches `/blockhash not found/i`. A wrapped Privy error, or “TransactionExpiredBlockheightExceededError”, does not match, so there is no second attempt.
+The retry only continues when the error text matches `/blockhash not found/i`. A wrapped Privy error, or `TransactionExpiredBlockheightExceededError`, does not match, so there is no second attempt.
 
 ### 1.3 The simulation that gates the button is not the transaction that gets signed
 
@@ -45,7 +47,7 @@ These are checked on-chain after the signature, inside program `Cerk8WwzTJY9YVF9
 
 | Code | Meaning | Why it still happens |
 | --- | --- | --- |
-| `0x8` | LP matcher is not authorized | The LP control word was not enabled, or the matcher context / delegate / expiry no longer matches. The UI tells the operator to run `pnpm reauthorize:lp`. A normal user cannot fix it. |
+| `0x8` | LP matcher is not authorized | The LP control word was not enabled, or the matcher context, delegate, or expiry no longer matches. The UI tells the operator to run `pnpm reauthorize:lp`. A normal user cannot fix it. |
 | `0x9` | Invalid instruction | Matcher context owner or length is wrong, on-chain price is 0, the matcher quote misses the signed limit, or the fee floor is above the market max. |
 | `0x15` | Asset is not Active | Lifecycle other than 2 (DrainOnly, Retired, Pending). A new position is rejected. |
 | `0x1e` | Market id moved | The id in the instruction does not match the slot read at execution. |
@@ -70,7 +72,7 @@ if (!/^\d+$/.test(String(market.marketId))) {
 }
 ```
 
-So the markets the page shows cannot be signed. The only clicks that open a wallet are old numeric slots on the single market account `6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN`. Those slots are the already-imported book, not the Braves game from `smoke:jupiter`.
+So the markets the page shows cannot be signed. The only clicks that open a wallet are old numeric slots on the single market account `6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN`. Those slots are the already-imported book, not the live Jupiter markets from `smoke:jupiter`.
 
 ### 1.7 Privy can sign a different key from the one on screen
 
@@ -87,11 +89,9 @@ process.exit(0);
 
 It does not read the market account. It does not count free slots. It does not retire a market that closes after 30 October. It exits 0, so the shell looks successful. The programs are skipped because they are already deployed. Bootstrap is never started. `deployments/jupiter-live-market.json` stays a local file.
 
-The group really does have eight asset slots. Earlier imports filled them. Percolator returns `0x15` if you append past the live capacity. Replacing a slot means retiring or settling the old asset first, then activating the new Jupiter market into that slot. Nothing in the deploy script does that.
+The group has eight asset slots. Earlier imports filled them. Percolator returns `0x15` if you append past the live capacity. Replacing a slot means retiring or settling the old asset first, then activating the new Jupiter market into that slot. Nothing in the deploy script does that.
 
 `smoke:jupiter` also only keeps one market, the first candidate. It cannot fill the book with every open Jupiter market that closes by 30 October 2026.
-
-The Atlanta Braves market from the last smoke run closes at `closeTimeMs` `1791763200000` (12 October 2026). It is inside the window. It was still not deployed, because of the hard stop above, not because of its date.
 
 ## 3. Other problems
 
@@ -145,3 +145,12 @@ The Atlanta Braves market from the last smoke run closes at `closeTimeMs` `17917
 3. Use an RPC that can confirm over HTTP. Do not wait on `signatureSubscribe` against Alchemy.
 4. Point the trade at a slot whose lifecycle is Active (`2`), whose market id is the one in the instruction, and whose matcher context is unexpired and authorized by the LP.
 5. Retire a slot that fails the date rule, then activate the Jupiter market into that slot. Do not call `deploy:devnet:live` while it exits 0 without bootstrap.
+
+## 5. Fix order
+
+1. Blockhash and confirm path in `wallet-providers.tsx` (sections 1.1 and 1.2). This blocks every signed transaction.
+2. Re-authorize or rotate the matcher context past expiry (section 1.4). This blocks program acceptance.
+3. Import Jupiter markets into numeric on-chain slots, or stop offering cards that cannot be signed (section 1.6 and section 2).
+4. Use the Position Size input (section 1.5).
+5. Faucet key, and do not let Privy override a connected Phantom that holds the SOL (section 1.7).
+6. Stale titles, Neon drift, and the deploy script’s hard exit.
