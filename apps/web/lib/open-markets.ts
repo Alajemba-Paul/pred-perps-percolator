@@ -2,12 +2,14 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { DEVNET_DEPLOYMENT, decodeMarketAssetSlot, readMaxMarketSlots } from "./contracts";
 import fs from "node:fs";
 import { listLiveJupiterMarkets } from "./jupiter-live";
+import { applySavedGroup } from "./saved-group";
 import type { ApiMarket } from "./markets";
 
 const FAR_CLOSE = "1893456000";
 
 /** Slots the program will accept a new position on. Null means the account could not be read. */
 export async function listOpenChainMarkets(): Promise<ApiMarket[] | null> {
+  applySavedGroup();
   const rpc =
     process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
     process.env.SOLANA_RPC_URL ||

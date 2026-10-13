@@ -18,9 +18,11 @@ const {
 
 const PERCOLATOR = new PublicKey("Cerk8WwzTJY9YVF9SaHCtUjG15jNGHN26iqyNeUETqnC");
 const ORACLE = new PublicKey("AecrmxU7nvFAVEAy7LcJbEpTFPXax3ByyouKANGSGuD5");
-const MARKET = new PublicKey("6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN");
+const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const ASSOCIATED_TOKEN_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+let groupMarket = new PublicKey("6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN");
 const ORACLE_CONFIG = new PublicKey("78hrLhgJLdDZGj93rbo6CidrjeWeh2DANZYUYC4jATZY");
-const ACTIVE = 2;
+let groupMeta = {};
 const DRAIN = 3;
 const RETIRED = 4;
 const RECOVERY = 5;
@@ -46,6 +48,7 @@ function keypairPath() {
 }
 
 function u16(n) { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; }
+function u32(n) { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; }
 function u64(n) { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; }
 function i64(n) { const b = Buffer.alloc(8); b.writeBigInt64LE(BigInt(n)); return b; }
 function u128(n) { const b = Buffer.alloc(16); const x = BigInt(n); b.writeBigUInt64LE(x & ((1n << 64n) - 1n), 0); b.writeBigUInt64LE(x >> 64n, 8); return b; }
@@ -75,16 +78,16 @@ function readSlots(data) {
   return { nextMarketId, configured, capacity, freeCount, slots };
 }
 
-async function send(connection, payer, ix) {
+async function sendAll(connection, payer, ixs, extraSigners = []) {
   const tx = new Transaction().add(
     ComputeBudgetProgram.requestHeapFrame({ bytes: 128 * 1024 }),
     ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
-    ix,
+    ...ixs,
   );
   const latest = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = latest.blockhash;
   tx.feePayer = payer.publicKey;
-  tx.sign(payer);
+  tx.sign(payer, ...extraSigners);
   const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: "confirmed" });
   for (let i = 0; i < 40; i++) {
     const status = await connection.getSignatureStatuses([sig], { searchTransactionHistory: true });
@@ -96,6 +99,10 @@ async function send(connection, payer, ix) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   throw new Error("timed out waiting for " + sig);
+}
+
+async function send(connection, payer, ix) {
+  return sendAll(connection, payer, [ix]);
 }
 
 function activatePercolatorData(assetIndex, marketId, price, authority) {
@@ -170,7 +177,7 @@ async function advanceLifecycle(connection, payer, record) {
       { pubkey: payer.publicKey, isSigner: true, isWritable: false },
       { pubkey: ORACLE_CONFIG, isSigner: false, isWritable: false },
       { pubkey: record, isSigner: false, isWritable: true },
-      { pubkey: MARKET, isSigner: false, isWritable: true },
+      { pubkey: groupMarket, isSigner: false, isWritable: true },
       { pubkey: PERCOLATOR, isSigner: false, isWritable: false },
     ],
     data: Buffer.from([6]),
@@ -205,8 +212,8 @@ function priceE6(value) {
   return null;
 }
 
-async function jupiterMarkets() {
-  const used = new Set(readMapped().map((row) => row.providerMarketId));
+async function jupiterMarkets(includeDeployed = false) {
+  const used = includeDeployed ? new Set() : new Set(readMapped().map((row) => row.providerMarketId));
   const key = process.env.JUPITER_API_KEY;
   const base = (process.env.JUPITER_PREDICTION_BASE_URL || "https://api.jup.ag/prediction/v1").replace(/\/$/, "");
   const found = [];
@@ -257,7 +264,7 @@ const payer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(keyp
 const connection = new Connection(rpc, "confirmed");
 console.log("payer", payer.publicKey.toBase58());
 
-let info = await connection.getAccountInfo(MARKET, "confirmed");
+let info = await connection.getAccountInfo(groupMarket, "confirmed");
 if (!info) throw new Error("market account missing");
 let decoded = readSlots(new Uint8Array(info.data));
 const rows = await indexedRows();
@@ -265,8 +272,12 @@ const nowSecIndex = Math.floor(Date.now() / 1000);
 const expired = new Set(rows.filter((row) => Number(row.closeTime) > 0 && Number(row.closeTime) < nowSecIndex).map((row) => String(row.marketId)));
 const recordByMarket = new Map(rows.filter((row) => row.address && row.marketId).map((row) => [String(row.marketId), row.address]));
 const slotNow = await connection.getSlot("confirmed");
-const markets = await jupiterMarkets();
+const markets = await jupiterMarkets(freshGroup);
 if (markets.length === 0) throw new Error("No new Jupiter market left to activate. The last smoke market is already on devnet, or the live list had no priced open markets.");
+if (freshGroup) {
+  await runFreshGroup();
+  process.exit(0);
+}
 
 function lifecycleName(slot) {
   if (slot.empty) return "empty";
@@ -282,7 +293,7 @@ for (const slot of decoded.slots) {
 const inScope = (slot) => targetSlot === null || slot.assetIndex === targetSlot;
 
 async function activateAt(assetIndex, market, mapped) {
-  info = await connection.getAccountInfo(MARKET, "confirmed");
+  info = await connection.getAccountInfo(groupMarket, "confirmed");
   decoded = readSlots(new Uint8Array(info.data));
   const marketId = decoded.nextMarketId;
   console.log("activating", market.providerMarketId, "into slot", assetIndex);
@@ -290,7 +301,7 @@ async function activateAt(assetIndex, market, mapped) {
     programId: PERCOLATOR,
     keys: [
       { pubkey: payer.publicKey, isSigner: true, isWritable: false },
-      { pubkey: MARKET, isSigner: false, isWritable: true },
+      { pubkey: groupMarket, isSigner: false, isWritable: true },
     ],
     data: activatePercolatorData(assetIndex, marketId, market.initialMarkE6, payer.publicKey.toBuffer()),
   }));
@@ -303,18 +314,22 @@ async function activateAt(assetIndex, market, mapped) {
     signature: sig,
   });
   mkdirSync("deployments", { recursive: true });
-  writeFileSync("deployments/devnet-markets.json", JSON.stringify({
+  mkdirSync("apps/web/public", { recursive: true });
+  const body = JSON.stringify({
     updatedAt: new Date().toISOString(),
-    marketGroup: MARKET.toBase58(),
+    marketGroup: groupMarket.toBase58(),
+    ...groupMeta,
     markets: mapped,
-  }, null, 2) + "\n");
+  }, null, 2) + "\n";
+  writeFileSync("deployments/devnet-markets.json", body);
+  writeFileSync("apps/web/public/group.json", body);
 }
 
 const mapped = readMapped();
 let cursor = 0;
 let activated = 0;
 while (cursor < markets.length) {
-  info = await connection.getAccountInfo(MARKET, "confirmed");
+  info = await connection.getAccountInfo(groupMarket, "confirmed");
   decoded = readSlots(new Uint8Array(info.data));
   const frontier = decoded.slots.find((slot) => slot.empty && slot.assetIndex === decoded.configured && inScope(slot));
   if (!frontier || decoded.freeCount !== 0) break;
@@ -323,7 +338,7 @@ while (cursor < markets.length) {
   activated += 1;
 }
 if (activated > 0) {
-  info = await connection.getAccountInfo(MARKET, "confirmed");
+  info = await connection.getAccountInfo(groupMarket, "confirmed");
   decoded = readSlots(new Uint8Array(info.data));
   const empty = decoded.slots.filter((slot) => slot.empty).map((slot) => slot.assetIndex);
   console.log("activated", activated, "market(s). wrote deployments/devnet-markets.json");
@@ -369,7 +384,7 @@ for (const slot of retireOrder) {
       programId: PERCOLATOR,
       keys: [
         { pubkey: payer.publicKey, isSigner: true, isWritable: false },
-        { pubkey: MARKET, isSigner: false, isWritable: true },
+        { pubkey: groupMarket, isSigner: false, isWritable: true },
       ],
       data: retireData(slot.assetIndex, slot.marketId, slotNow),
     }));
@@ -387,38 +402,150 @@ for (const slot of retireOrder) {
   }
 }
 
-if (freshGroup) {
-  console.log("[rotate] No slot on this group can be reused. Starting a new market group.");
-  const { spawnSync } = await import("node:child_process");
-  const payerPath = keypairPath();
-  const rpc = process.env.DEVNET_RPC_URL || process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com";
-  const result = spawnSync("cargo", [
-    "run", "--quiet", "--manifest-path", "tools/moxie-bootstrap/Cargo.toml", "--",
-    rpc,
-    "vendor/percolator-prog/target/deploy/percolator_prog-keypair.json",
-    "programs/moxie-matcher/target/deploy/moxie_matcher-keypair.json",
-    "programs/moxie-oracle/target/deploy/moxie_oracle-keypair.json",
-    "config/percolator.market-group.json",
-    "deployments/devnet.local.json",
-    payerPath,
-    "deployments/jupiter-live-market.json",
-  ], { stdio: "inherit" });
-  if (result.status !== 0) process.exit(result.status ?? 1);
-  const deployment = JSON.parse(readFileSync("deployments/devnet.local.json", "utf8"));
-  const imported = deployment.importedMarkets?.[0];
-  writeFileSync("deployments/devnet-markets.json", JSON.stringify({
-    updatedAt: new Date().toISOString(),
-    marketGroup: deployment.marketAccount,
-    markets: imported ? [{
-      providerMarketId: imported.providerMarketId,
-      assetIndex: imported.assetIndex,
-      marketId: String(imported.marketId),
-      title: markets[0].title,
-    }] : [],
-  }, null, 2) + "\n");
-  console.log("new market group", deployment.marketAccount);
-  console.log("Set NEXT_PUBLIC_MARKET_ACCOUNT to that address on Vercel, then redeploy. Slot 0 is the group base. The Jupiter market is the next slot.");
-  process.exit(0);
+async function runFreshGroup() {
+  console.log("[rotate] --fresh-group: skipping the locked group.");
+  const old = await connection.getAccountInfo(groupMarket, "confirmed");
+  const marketLen = old?.data?.length || 15694;
+  const mint = Keypair.generate();
+  const market = Keypair.generate();
+  const mintRent = await connection.getMinimumBalanceForRentExemption(82);
+  const marketRent = await connection.getMinimumBalanceForRentExemption(marketLen);
+  console.log("creating mint", mint.publicKey.toBase58());
+  await sendAll(connection, payer, [
+    SystemProgram.createAccount({
+      fromPubkey: payer.publicKey,
+      newAccountPubkey: mint.publicKey,
+      lamports: mintRent,
+      space: 82,
+      programId: TOKEN_PROGRAM,
+    }),
+    new TransactionInstruction({
+      programId: TOKEN_PROGRAM,
+      keys: [{ pubkey: mint.publicKey, isSigner: false, isWritable: true }],
+      data: Buffer.concat([Buffer.from([20, 6]), payer.publicKey.toBuffer(), Buffer.from([0])]),
+    }),
+  ], [mint]);
+  console.log("creating market group", market.publicKey.toBase58(), "len", marketLen);
+  await sendAll(connection, payer, [
+    SystemProgram.createAccount({
+      fromPubkey: payer.publicKey,
+      newAccountPubkey: market.publicKey,
+      lamports: marketRent,
+      space: marketLen,
+      programId: PERCOLATOR,
+    }),
+    new TransactionInstruction({
+      programId: PERCOLATOR,
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: false },
+        { pubkey: market.publicKey, isSigner: false, isWritable: true },
+        { pubkey: mint.publicKey, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.concat([
+        Buffer.from([0]),
+        u16(8),
+        u64(0),
+        u64(10),
+        u64(500000),
+        u128(1),
+        u128(2),
+        u64(10000),
+        u64(10000),
+        u64(10000),
+        u64(30),
+        u64(0),
+        u128(0),
+        u128(0),
+        u64(100),
+        u64(100),
+        u64(0),
+        u64(100),
+        u64(1),
+        u64(1),
+        u64(100),
+        u128(10_000_000_000_000_000),
+        u128(0),
+      ]),
+    }),
+  ], [market]);
+  groupMarket = market.publicKey;
+  const [vaultAuthority] = PublicKey.findProgramAddressSync([Buffer.from("vault"), market.publicKey.toBuffer()], PERCOLATOR);
+  const [vault] = PublicKey.findProgramAddressSync(
+    [vaultAuthority.toBuffer(), TOKEN_PROGRAM.toBuffer(), mint.publicKey.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM,
+  );
+  await sendAll(connection, payer, [
+    new TransactionInstruction({
+      programId: ASSOCIATED_TOKEN_PROGRAM,
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: vault, isSigner: false, isWritable: true },
+        { pubkey: vaultAuthority, isSigner: false, isWritable: false },
+        { pubkey: mint.publicKey, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from([1]),
+    }),
+  ]);
+  const [oracleConfig] = PublicKey.findProgramAddressSync([Buffer.from("config"), market.publicKey.toBuffer()], ORACLE);
+  try {
+    await sendAll(connection, payer, [
+      new TransactionInstruction({
+        programId: ORACLE,
+        keys: [
+          { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+          { pubkey: oracleConfig, isSigner: false, isWritable: true },
+          { pubkey: PERCOLATOR, isSigner: false, isWritable: false },
+          { pubkey: market.publicKey, isSigner: false, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data: Buffer.concat([
+          Buffer.from([0]),
+          payer.publicKey.toBuffer(),
+          u64(30),
+          u64(1000),
+          u32(2500),
+          u32(2000),
+          u64(20000),
+          u64(15000),
+          u64(100000),
+          u32(10),
+          Buffer.alloc(4),
+          u64(50000),
+          u64(5000),
+          u64(150000),
+          u64(500),
+        ]),
+      }),
+    ]);
+    console.log("oracle config", oracleConfig.toBase58());
+  } catch (err) {
+    console.log("oracle init skipped:", (err.message || err).split("\n")[0]);
+  }
+  groupMeta = {
+    usdcMint: mint.publicKey.toBase58(),
+    collateralVault: vault.toBase58(),
+    vaultAuthority: vaultAuthority.toBase58(),
+    oracleConfig: oracleConfig.toBase58(),
+  };
+  console.log("InitMarket owns slot 0. Jupiter markets start at the next empty slot.");
+  const mapped = [];
+  let cursor = 0;
+  while (cursor < markets.length) {
+    info = await connection.getAccountInfo(groupMarket, "confirmed");
+    decoded = readSlots(new Uint8Array(info.data));
+    const frontier = decoded.slots.find((slot) => slot.empty && slot.assetIndex === decoded.configured);
+    if (!frontier || decoded.freeCount !== 0) break;
+    await activateAt(frontier.assetIndex, markets[cursor], mapped);
+    cursor += 1;
+  }
+  console.log("new market group", groupMarket.toBase58());
+  console.log("activated", mapped.length, "Jupiter market(s). wrote deployments/devnet-markets.json and apps/web/public/group.json");
+  console.log("NEXT_PUBLIC_MARKET_ACCOUNT=" + groupMarket.toBase58());
+  console.log("NEXT_PUBLIC_USDC_MINT=" + mint.publicKey.toBase58());
+  console.log("NEXT_PUBLIC_COLLATERAL_VAULT=" + vault.toBase58());
+  console.log("Commit both json files and push. If those three vars are already set on Vercel, replace them with the lines above.");
 }
 
 console.error("[rotate] No empty slot, and no occupied slot could be retired. Slot 0 cannot be retired. Re-run with --fresh-group to create a new market group.");

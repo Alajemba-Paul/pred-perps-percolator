@@ -10,6 +10,7 @@ import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import { DEVNET_DEPLOYMENT, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@/lib/contracts";
+import { applySavedGroup } from "@/lib/saved-group";
 import fs from "fs";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,7 @@ function getPayerKeypair(): Keypair | null {
 }
 
 export async function POST(req: NextRequest) {
+  applySavedGroup();
   try {
     const { recipient } = await req.json();
     if (!recipient) {

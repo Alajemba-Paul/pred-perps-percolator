@@ -9,6 +9,7 @@ import {
   SystemProgram,
 } from "@solana/web3.js";
 import { DEVNET_DEPLOYMENT, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@/lib/contracts";
+import { applySavedGroup } from "@/lib/saved-group";
 import fs from "fs";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +67,7 @@ function getPayerKeypair(): Keypair | null {
 }
 
 export async function GET() {
+  applySavedGroup();
   const payer = getPayerKeypair();
   return NextResponse.json({
     configured: Boolean(payer),
@@ -74,6 +76,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  applySavedGroup();
   try {
     const body = await req.json().catch(() => ({}));
     const recipient = body.wallet || body.recipient || body.pubkey || (typeof body === "string" ? body : null);

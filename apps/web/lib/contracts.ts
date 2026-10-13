@@ -38,6 +38,15 @@ export async function loadLpConfig(): Promise<void> {
     if (typeof data.lpPortfolio === "string") DEVNET_DEPLOYMENT.lpPortfolio = data.lpPortfolio;
     if (typeof data.matcherContext === "string") DEVNET_DEPLOYMENT.matcherContext = data.matcherContext;
     if (typeof data.matcherDelegate === "string") DEVNET_DEPLOYMENT.matcherDelegate = data.matcherDelegate;
+    const group = await fetch("/group.json", { cache: "no-store" });
+    if (group.ok) {
+      const saved = await group.json();
+      if (typeof saved.marketGroup === "string") DEVNET_DEPLOYMENT.marketAccount = saved.marketGroup;
+      if (typeof saved.usdcMint === "string") DEVNET_DEPLOYMENT.usdcMint = saved.usdcMint;
+      if (typeof saved.collateralVault === "string") DEVNET_DEPLOYMENT.collateralVault = saved.collateralVault;
+      if (typeof saved.vaultAuthority === "string") DEVNET_DEPLOYMENT.vaultAuthority = saved.vaultAuthority;
+      if (typeof saved.oracleConfig === "string") DEVNET_DEPLOYMENT.oracleConfig = saved.oracleConfig;
+    }
   } catch {
     // The checked-in LP stays in place until reauthorize:lp writes this file.
   }

@@ -6,10 +6,12 @@ import {
   deriveUserPortfolioAddress,
   decodePortfolioSummary,
 } from "@/lib/contracts";
+import { applySavedGroup } from "@/lib/saved-group";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  applySavedGroup();
   try {
     const { searchParams } = new URL(req.url);
     const address = searchParams.get("address");

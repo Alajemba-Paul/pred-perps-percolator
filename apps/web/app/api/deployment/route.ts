@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { DEVNET_DEPLOYMENT } from "@/lib/contracts";
+import { applySavedGroup } from "@/lib/saved-group";
 import { getIndexerUrl } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  applySavedGroup();
   const hasSecret = Boolean(process.env.DEVNET_PAYER_SECRET);
 
   const indexerUrl = getIndexerUrl();

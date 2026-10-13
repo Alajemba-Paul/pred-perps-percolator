@@ -15,6 +15,7 @@ import {
   useSignTransaction,
 } from "@privy-io/react-auth/solana";
 import { confirmSignatureHttp, isExpiredBlockhash } from "@/lib/confirm";
+import { loadLpConfig } from "@/lib/contracts";
 import { ConnectionProvider } from "@solana/wallet-adapter-react";
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 
@@ -378,6 +379,9 @@ export function usePrivyWalletState() {
 export function WalletProviders({ children }: { children: ReactNode }) {
   const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim();
+  useEffect(() => {
+    loadLpConfig().catch(() => undefined);
+  }, []);
 
   if (!privyAppId) {
     return (
