@@ -98,6 +98,22 @@ async function send(connection, payer, ix) {
   throw new Error("timed out waiting for " + sig);
 }
 
+function activatePercolatorData(assetIndex, marketId, price, authority) {
+  return Buffer.concat([
+    Buffer.from([40, 0]),
+    u16(assetIndex),
+    u64(marketId),
+    u64(0),
+    u64(0),
+    u64(price),
+    u128(0),
+    authority,
+    authority,
+    authority,
+    authority,
+  ]);
+}
+
 function retireData(assetIndex, marketId, nowSlot) {
   return Buffer.concat([
     Buffer.from([40, 2]),
@@ -202,22 +218,14 @@ async function activateAt(assetIndex) {
   decoded = readSlots(new Uint8Array(info.data));
   const market = markets[0];
   const marketId = decoded.nextMarketId;
-  const [record] = PublicKey.findProgramAddressSync(
-    [Buffer.from("imported"), ORACLE_CONFIG.toBuffer(), sha(market.providerMarketId)],
-    ORACLE,
-  );
+  console.log("activating through Percolator. The oracle follow-up is locked while this group still has positions.");
   const sig = await send(connection, payer, new TransactionInstruction({
-    programId: ORACLE,
+    programId: PERCOLATOR,
     keys: [
-      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
       { pubkey: payer.publicKey, isSigner: true, isWritable: false },
-      { pubkey: ORACLE_CONFIG, isSigner: false, isWritable: false },
-      { pubkey: record, isSigner: false, isWritable: true },
       { pubkey: MARKET, isSigner: false, isWritable: true },
-      { pubkey: PERCOLATOR, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
-    data: activateData(market, assetIndex, marketId, Math.floor(Date.now() / 1000)),
+    data: activatePercolatorData(assetIndex, marketId, market.initialMarkE6, payer.publicKey.toBuffer()),
   }));
   console.log("activated", market.providerMarketId, "slot", assetIndex, "market", marketId.toString(), sig);
   mkdirSync("deployments", { recursive: true });
