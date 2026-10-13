@@ -58,10 +58,8 @@ const bootstrapArgs = ["run", "--quiet", "--manifest-path", "tools/moxie-bootstr
   deploymentPath,
   payerPath];
 if (devnet && process.argv.includes("--live")) {
-  console.error("[deploy] This command did not send a transaction.");
-  console.error("[deploy] The devnet market group has 8 slots. Appending past a full group returns custom error 0x15.");
-  console.error("[deploy] Retire or settle a slot first. Bootstrap was not started, so exit 0 would be a lie.");
-  process.exit(1);
+  run("node", ["scripts/rotate-devnet-markets.mjs"]);
+  process.exit(0);
 }
 if (process.argv.includes("--live")) bootstrapArgs.push("deployments/jupiter-live-market.json");
 run("cargo", bootstrapArgs);

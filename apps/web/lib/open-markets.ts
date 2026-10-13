@@ -1,5 +1,6 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { DEVNET_DEPLOYMENT, decodeMarketAssetSlot, readMaxMarketSlots } from "./contracts";
+import fs from "node:fs";
 import { listLiveJupiterMarkets } from "./jupiter-live";
 import type { ApiMarket } from "./markets";
 
@@ -54,17 +55,6 @@ export async function listOpenChainMarkets(): Promise<ApiMarket[] | null> {
   }
 }
 
-function usableTitle(title: string | undefined): boolean {
-  if (!title) return false;
-  return (
-    !title.startsWith("Unused Slot") &&
-    !title.startsWith("Open market #") &&
-    !title.startsWith("Percolator") &&
-    !title.includes("(Record #1)") &&
-    !/^Jupiter Live Market/i.test(title)
-  );
-}
-
 async function indexedMarkets(): Promise<ApiMarket[]> {
   const raw =
     process.env.MOXIE_API_URL ||
@@ -81,33 +71,41 @@ async function indexedMarkets(): Promise<ApiMarket[]> {
   }
 }
 
-/** Active on-chain slots only. Jupiter rows that are not imported are dropped. */
+/** Jupiter rows, each stamped with a live numeric slot when one exists. */
 export async function listTradableDevnetMarkets(): Promise<ApiMarket[]> {
-  const chain = await listOpenChainMarkets();
-  if (!chain || chain.length === 0) return [];
+  const chain = (await listOpenChainMarkets()) ?? [];
   const [indexed, jupiter] = await Promise.all([
     indexedMarkets(),
     listLiveJupiterMarkets().catch(() => [] as ApiMarket[]),
   ]);
+  const fileMap = readSlotMap();
+  if (jupiter.length === 0) return chain;
 
-  return chain
-    .filter((slot) => /^\d+$/.test(slot.marketId))
-    .map((slot) => {
-      const known = indexed.find((row) => row.marketId === slot.marketId && usableTitle(row.title));
-      const live = known
-        ? jupiter.find(
-            (row) =>
-              row.providerMarketId === known.providerMarketId ||
-              row.marketId === known.providerMarketId,
-          )
-        : undefined;
-      const titled = live && usableTitle(live.title) ? live : known;
-      return {
-        ...slot,
-        title: titled && usableTitle(titled.title) ? titled.title : slot.title,
-        rules: titled?.rules || slot.rules,
-        providerMarketId: known?.providerMarketId || slot.providerMarketId,
-        closeTime: known?.closeTime && known.closeTime !== "0" ? known.closeTime : slot.closeTime,
-      };
-    });
+  return jupiter.map((row) => {
+    const fromFile = fileMap.find((item) => item.providerMarketId === row.providerMarketId);
+    const fromIndex = indexed.find(
+      (item) => item.providerMarketId === row.providerMarketId || item.providerMarketId === row.marketId,
+    );
+    const marketId = String(fromFile?.marketId ?? (fromIndex && /^\d+$/.test(fromIndex.marketId) ? fromIndex.marketId : ""));
+    const assetIndex = Number(fromFile?.assetIndex ?? fromIndex?.assetIndex);
+    const slot = chain.find((item) => item.marketId === marketId && item.assetIndex === assetIndex);
+    if (!slot) return row;
+    return {
+      ...row,
+      address: `open-${slot.assetIndex}`,
+      marketId: slot.marketId,
+      assetIndex: slot.assetIndex,
+      markE6: slot.markE6,
+      indexE6: slot.indexE6,
+    };
+  });
+}
+
+function readSlotMap(): Array<{ providerMarketId: string; marketId: string; assetIndex: number }> {
+  try {
+    const raw = JSON.parse(fs.readFileSync("deployments/devnet-markets.json", "utf8"));
+    return Array.isArray(raw.markets) ? raw.markets : [];
+  } catch {
+    return [];
+  }
 }

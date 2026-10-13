@@ -37,12 +37,11 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
 
   const tradableMarkets = markets.filter((m) => {
     const isActive = m.status === "active" || m.status === 1;
-    const imported = /^\d+$/.test(String(m.marketId));
     const hidden =
       m.title.startsWith("Unused Slot") ||
       m.title.startsWith("Percolator Collateral") ||
       m.title.includes("(Record #1)");
-    return isActive && imported && !hidden;
+    return isActive && !hidden;
   });
 
   return (
@@ -93,6 +92,7 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                 })
               : "Until Resolved";
 
+            const onChain = /^\d+$/.test(String(market.marketId));
             const targetHref = `/trade/${market.slug || market.address}`;
 
             return (
@@ -120,7 +120,8 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                     )}
                   </div>
 
-                  <Link
+                    {onChain ? (
+                    <Link
                     href={targetHref}
                     style={{
                       display: "inline-flex",
@@ -139,6 +140,11 @@ export function MarketTable({ markets: initialMarkets }: { markets: Market[] }) 
                     <span>Trade</span>
                     <ArrowRight size={14} />
                   </Link>
+                    ) : (
+                      <span style={{ fontSize: "12px", color: "#ffb400", border: "1px solid rgba(255,180,0,0.4)", borderRadius: "4px", padding: "8px 10px" }}>
+                        Market not active on-chain
+                      </span>
+                    )}
                 </div>
 
                 <div

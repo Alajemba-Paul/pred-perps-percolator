@@ -2,7 +2,7 @@
 
 **Repo:** https://github.com/Alajemba-Paul/pred-perps-percolator
 **Demo:** https://moxie-devnet-demo.vercel.app
-**Status:** client confirm path fixed in this commit. On-chain matcher rotation and slot replacement are still operator steps. This environment has no payer key, so no devnet signature was produced here.
+**Status:** `deploy:devnet:live` now runs `scripts/rotate-devnet-markets.mjs`. That sends `UpdateAssetLifecycle` action 2 (retire) for closed, recovery, or past-close slots, then oracle tag 5 into a retired slot. It exits 1 if no slot is freed. The markets page shows Jupiter events and marks the ones with no live numeric slot as "Market not active on-chain". A confirmed signature still requires the operator key on the machine that runs the script.
 
 ## What changed
 

@@ -202,7 +202,8 @@ export function Terminal({ market }: { market: Market }) {
   const maxPayout = estimatedContracts * 1.0;
   const potentialProfit = Math.max(0, maxPayout - numSizeUsdc);
 
-  const isTradable = (market.status === "active" || market.status === 1) && /^\d+$/.test(String(market.marketId));
+  const onChain = /^\d+$/.test(String(market.marketId));
+  const isTradable = onChain && (market.status === "active" || market.status === 1);
 
   // Execute trade (Single click handler, no page-load cache comparison)
   async function handleExecuteTrade() {
@@ -555,7 +556,7 @@ export function Terminal({ market }: { market: Market }) {
 
       {!/^\d+$/.test(String(market.marketId)) && (
         <div style={{ background: "rgba(255,180,0,0.1)", border: "1px solid rgba(255,180,0,0.3)", borderRadius: "6px", padding: "12px 16px", color: "#ffb400", fontSize: "13px" }}>
-          This event is not imported on devnet yet. Trading stays off until an operator activates it.
+          Market not active on-chain
         </div>
       )}
       {(market.status !== "active" && market.status !== 1) && (
@@ -574,6 +575,7 @@ export function Terminal({ market }: { market: Market }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <button
               type="button"
+              disabled={!onChain}
               onClick={() => { setSide("Long"); setTradeError(null); }}
               style={{
                 padding: "12px",
@@ -591,6 +593,7 @@ export function Terminal({ market }: { market: Market }) {
 
             <button
               type="button"
+              disabled={!onChain}
               onClick={() => { setSide("Short"); setTradeError(null); }}
               style={{
                 padding: "12px",
