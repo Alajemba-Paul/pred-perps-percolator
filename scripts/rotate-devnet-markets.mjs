@@ -186,38 +186,53 @@ function readMapped() {
   }
 }
 
+function priceE6(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n <= 1) return Math.round(n * 1_000_000);
+  if (Number.isInteger(n) && n <= 1_000_000) return n;
+  return null;
+}
+
 async function jupiterMarkets() {
   const used = new Set(readMapped().map((row) => row.providerMarketId));
   const key = process.env.JUPITER_API_KEY;
   const base = (process.env.JUPITER_PREDICTION_BASE_URL || "https://api.jup.ag/prediction/v1").replace(/\/$/, "");
   const found = [];
+  let eventCount = 0;
+  if (!key) console.log("JUPITER_API_KEY is not set for the rotate script");
   if (key) {
-    const query = new URLSearchParams({ includeMarkets: "true", filter: "live", start: "0", end: "40" });
-    const res = await fetch(`${base}/events?${query}`, { headers: { "x-api-key": key, accept: "application/json" } });
-    if (!res.ok) throw new Error("Jupiter events " + res.status);
-    const payload = await res.json();
-    const events = Array.isArray(payload) ? payload : payload.events || payload.data || [];
-    for (const event of events) {
-      for (const market of event.markets || []) {
-        const providerMarketId = market.marketId || market.id;
-        if (!providerMarketId || used.has(providerMarketId) || found.some((row) => row.providerMarketId === providerMarketId)) continue;
-        const pricing = market.pricing || {};
-        const bid = Number(pricing.sellYesPriceUsd);
-        const ask = Number(pricing.buyYesPriceUsd);
-        const close = Date.parse(market.metadata?.closeTime || market.closeTime || "");
-        if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask >= 1 || ask <= bid) continue;
-        if (!Number.isFinite(close) || close < Date.now() + 15 * 60_000) continue;
-        const mark = Math.round(((bid + ask) / 2) * 1_000_000);
-        if (mark < 1 || mark > 999_999) continue;
-        const title = `${event.metadata?.title || event.title || providerMarketId} — ${market.metadata?.title || market.title || ""}`.trim();
-        found.push({ providerMarketId, title, initialMarkE6: mark, closeTimeMs: close });
-        if (found.length === 8) return found;
+    for (let start = 0; start < 80 && found.length < 8; start += 20) {
+      const query = new URLSearchParams({ includeMarkets: "true", filter: "live", start: String(start), end: String(start + 20) });
+      const res = await fetch(`${base}/events?${query}`, { headers: { "x-api-key": key, accept: "application/json" } });
+      if (!res.ok) throw new Error("Jupiter events " + res.status);
+      const payload = await res.json();
+      const events = Array.isArray(payload) ? payload : payload.events || payload.data || payload.items || [];
+      if (!Array.isArray(events) || events.length === 0) break;
+      eventCount += events.length;
+      for (const event of events) {
+        for (const market of event.markets || []) {
+          const providerMarketId = market.marketId || market.id;
+          if (!providerMarketId || used.has(providerMarketId) || found.some((row) => row.providerMarketId === providerMarketId)) continue;
+          const pricing = market.pricing || {};
+          const bid = priceE6(pricing.sellYesPriceUsd);
+          const ask = priceE6(pricing.buyYesPriceUsd);
+          const close = Date.parse(market.metadata?.closeTime || market.closeTime || "");
+          if (bid === null || ask === null || bid <= 0 || ask >= 1_000_000 || ask <= bid) continue;
+          if (!Number.isFinite(close) || close < Date.now() + 15 * 60_000) continue;
+          const mark = Math.round((bid + ask) / 2);
+          const title = `${event.metadata?.title || event.title || providerMarketId} — ${market.metadata?.title || market.title || ""}`.trim();
+          found.push({ providerMarketId, title, initialMarkE6: mark, closeTimeMs: close });
+          if (found.length === 8) break;
+        }
       }
     }
   }
+  console.log("Jupiter events", eventCount, "new markets", found.length, "already deployed", used.size);
   if (found.length === 0 && existsSync("deployments/jupiter-live-market.json")) {
     const one = JSON.parse(readFileSync("deployments/jupiter-live-market.json", "utf8"));
     if (one?.providerMarketId && !used.has(one.providerMarketId)) found.push(one);
+    else if (one?.providerMarketId) console.log(one.providerMarketId, "is already deployed");
   }
   return found;
 }
@@ -236,7 +251,7 @@ const expired = new Set(rows.filter((row) => Number(row.closeTime) > 0 && Number
 const recordByMarket = new Map(rows.filter((row) => row.address && row.marketId).map((row) => [String(row.marketId), row.address]));
 const slotNow = await connection.getSlot("confirmed");
 const markets = await jupiterMarkets();
-if (markets.length === 0) throw new Error("deployments/jupiter-live-market.json is missing");
+if (markets.length === 0) throw new Error("No new Jupiter market left to activate. The last smoke market is already on devnet, or the live list had no priced open markets.");
 
 function lifecycleName(slot) {
   if (slot.empty) return "empty";
