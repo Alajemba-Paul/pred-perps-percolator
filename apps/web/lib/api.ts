@@ -4,7 +4,7 @@
   type Market,
   toMarket,
 } from "./markets";
-import { listLiveJupiterMarkets } from "./jupiter-live";
+import { listTradableDevnetMarkets } from "./open-markets";
 import { DEVNET_DEPLOYMENT, decodePortfolioSummary, decodeImportedMarket } from "./contracts";
 import { Connection, PublicKey } from "@solana/web3.js";
 import fs from "fs";
@@ -115,8 +115,8 @@ export type { ApiPortfolio, ApiMarket, Market };
  */
 export async function getMarkets(): Promise<Market[]> {
   if (!isBrowser) {
-    const live = await listLiveJupiterMarkets();
-    if (live.length > 0) return live.map(toMarket);
+    const live = await listTradableDevnetMarkets();
+    return live.map(toMarket);
   }
 
   try {
