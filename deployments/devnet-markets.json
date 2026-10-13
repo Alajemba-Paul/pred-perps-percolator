@@ -1,0 +1,48 @@
+{
+  "updatedAt": "2026-10-13T03:58:05.618Z",
+  "marketGroup": "6T9L4mhZKjAv2YwYhuy2vJaeAcpuMGVkh2XcZTA7szoN",
+  "markets": [
+    {
+      "providerMarketId": "POLY-5507174-0",
+      "assetIndex": 2,
+      "marketId": "3",
+      "title": "Wuhan Tennis Open: Katerina Siniakova vs Liudmila Samsonova — Katerina Siniakova",
+      "signature": "5Ubim7EwRMKiPgiS9HA4sasqo9MgQmNrrW2SkGkufKntBiWCmQS6uMdgjwcCFd8HbZuUebNGK1mcqJ7DapM79Tqa"
+    },
+    {
+      "providerMarketId": "POLY-5507174-1",
+      "assetIndex": 3,
+      "marketId": "4",
+      "title": "Wuhan Tennis Open: Katerina Siniakova vs Liudmila Samsonova — Liudmila Samsonova",
+      "signature": "bFZiZMoYzoeMhKC98bPxVLrLM8ydQd9zfebpLQ43MeDhiUfHcqrbdz7Gw2ShNHCBoLpkwZjyLFEKskruYGhEvkm"
+    },
+    {
+      "providerMarketId": "POLY-5507175",
+      "assetIndex": 4,
+      "marketId": "5",
+      "title": "Wuhan Tennis Open: Katerina Siniakova vs Liudmila Samsonova — Completed Match",
+      "signature": "597yVg6d9ASRbJezymuuutVQHZ1ikTB4ux6ZCX2QJQs6Sn3pTiPKNp9LnQ4foYdpq1PL9PyxYv3ptq2g3DX2y4EU"
+    },
+    {
+      "providerMarketId": "POLY-5509035-0",
+      "assetIndex": 5,
+      "marketId": "6",
+      "title": "Wuhan Tennis Open: Katerina Siniakova vs Liudmila Samsonova — Over",
+      "signature": "35att7sKururEFmQ4yJem7Z5Rg74xkn4ND5SvFMqP24DPZaz5Jh6JwPdMgR9XZQ5GNiRiStZ3NywfposGLhAExsS"
+    },
+    {
+      "providerMarketId": "POLY-5509035-1",
+      "assetIndex": 6,
+      "marketId": "7",
+      "title": "Wuhan Tennis Open: Katerina Siniakova vs Liudmila Samsonova — Under",
+      "signature": "3CcTtvR34wSKxtDXhH6KYC3uXyPoXUsgeGE9cgwvWgScr2nJJEiyPYYG87McwC8WBpzVKDUtp2DB2whDA8Enty9s"
+    },
+    {
+      "providerMarketId": "POLY-5509041-0",
+      "assetIndex": 7,
+      "marketId": "8",
+      "title": "Wuhan Tennis Open: Katerina Siniakova vs Liudmila Samsonova — Over",
+      "signature": "2Xd7on1qkHqVCrQAvhV2a8bcppn1kVzQTmrqfdAs5zkwSaVzrFnm53D29QMxYWN2cMJY5HE7udA2gwzA1urMpN9H"
+    }
+  ]
+}
