@@ -58,7 +58,11 @@ const bootstrapArgs = ["run", "--quiet", "--manifest-path", "tools/moxie-bootstr
   deploymentPath,
   payerPath];
 if (devnet && process.argv.includes("--live")) {
-  run("node", ["scripts/rotate-devnet-markets.mjs"]);
+  const extra = [];
+  const target = process.argv.indexOf("--target-slot");
+  if (target !== -1 && process.argv[target + 1]) extra.push("--target-slot", process.argv[target + 1]);
+  if (process.argv.includes("--fresh-group")) extra.push("--fresh-group");
+  run("node", ["scripts/rotate-devnet-markets.mjs", ...extra]);
   process.exit(0);
 }
 if (process.argv.includes("--live")) bootstrapArgs.push("deployments/jupiter-live-market.json");

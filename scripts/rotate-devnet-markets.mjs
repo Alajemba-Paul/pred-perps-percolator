@@ -24,6 +24,14 @@ const ACTIVE = 2;
 const DRAIN = 3;
 const RETIRED = 4;
 const RECOVERY = 5;
+const EMPTY = 0;
+const args = process.argv.slice(2);
+const freshGroup = args.includes("--fresh-group");
+const targetFlag = args.indexOf("--target-slot");
+const targetSlot = targetFlag === -1 ? null : Number(args[targetFlag + 1]);
+if (targetSlot !== null && (!Number.isInteger(targetSlot) || targetSlot < 0 || targetSlot > 7)) {
+  throw new Error("--target-slot must be an integer from 0 to 7");
+}
 
 function keypairPath() {
   if (process.env.SOLANA_KEYPAIR && existsSync(process.env.SOLANA_KEYPAIR)) return process.env.SOLANA_KEYPAIR;
@@ -45,20 +53,26 @@ function sha(text) { return createHash("sha256").update(text).digest(); }
 
 function readSlots(data) {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const max = view.getUint32(498, true);
+  const configured = view.getUint32(498, true);
   const nextMarketId = view.getBigUint64(1013, true);
+  const freeCount = view.getUint16(214, true);
+  const capacity = Math.max(configured, Math.min(8, Math.floor((data.length - 1190) / 1813)));
   const slots = [];
-  const limit = max > 0 && max <= 64 ? max : 8;
-  for (let assetIndex = 0; assetIndex < limit; assetIndex++) {
+  for (let assetIndex = 0; assetIndex < capacity; assetIndex++) {
+    if (assetIndex >= configured) {
+      slots.push({ assetIndex, marketId: 0n, lifecycle: EMPTY, empty: true });
+      continue;
+    }
     const off = 1702 + assetIndex * 1813;
     if (off + 26 > data.length) break;
     slots.push({
       assetIndex,
       marketId: view.getBigUint64(off, true),
       lifecycle: data[off + 16],
+      empty: false,
     });
   }
-  return { nextMarketId, slots };
+  return { nextMarketId, configured, capacity, freeCount, slots };
 }
 
 async function send(connection, payer, ix) {
@@ -167,20 +181,93 @@ const nowSecIndex = Math.floor(Date.now() / 1000);
 const expired = new Set(rows.filter((row) => Number(row.closeTime) > 0 && Number(row.closeTime) < nowSecIndex).map((row) => String(row.marketId)));
 const recordByMarket = new Map(rows.filter((row) => row.address && row.marketId).map((row) => [String(row.marketId), row.address]));
 const slotNow = await connection.getSlot("confirmed");
+const markets = await jupiterMarkets();
+if (markets.length === 0) throw new Error("deployments/jupiter-live-market.json is missing");
 
-console.log("market slots:");
-for (const slot of decoded.slots) {
-  console.log(`  slot ${slot.assetIndex} market=${slot.marketId} lifecycle=${slot.lifecycle}`);
+function lifecycleName(slot) {
+  if (slot.empty) return "empty";
+  return { 2: "active", 3: "drain-only", 4: "retired", 5: "recovery" }[slot.lifecycle] || String(slot.lifecycle);
 }
 
-const candidates = decoded.slots
-  .filter((slot) => slot.assetIndex > 0 && slot.marketId !== 0n && slot.lifecycle !== RETIRED)
+console.log(`configured=${decoded.configured} capacity=${decoded.capacity} freeRetired=${decoded.freeCount} nextMarketId=${decoded.nextMarketId}`);
+console.log("market slots:");
+for (const slot of decoded.slots) {
+  console.log(`  slot ${slot.assetIndex} market=${slot.marketId} lifecycle=${slot.lifecycle} (${lifecycleName(slot)})`);
+}
+
+const inScope = (slot) => targetSlot === null || slot.assetIndex === targetSlot;
+
+async function activateAt(assetIndex) {
+  info = await connection.getAccountInfo(MARKET, "confirmed");
+  decoded = readSlots(new Uint8Array(info.data));
+  const market = markets[0];
+  const marketId = decoded.nextMarketId;
+  const [record] = PublicKey.findProgramAddressSync(
+    [Buffer.from("imported"), ORACLE_CONFIG.toBuffer(), sha(market.providerMarketId)],
+    ORACLE,
+  );
+  const sig = await send(connection, payer, new TransactionInstruction({
+    programId: ORACLE,
+    keys: [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
+      { pubkey: ORACLE_CONFIG, isSigner: false, isWritable: false },
+      { pubkey: record, isSigner: false, isWritable: true },
+      { pubkey: MARKET, isSigner: false, isWritable: true },
+      { pubkey: PERCOLATOR, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: activateData(market, assetIndex, marketId, Math.floor(Date.now() / 1000)),
+  }));
+  console.log("activated", market.providerMarketId, "slot", assetIndex, "market", marketId.toString(), sig);
+  mkdirSync("deployments", { recursive: true });
+  writeFileSync("deployments/devnet-markets.json", JSON.stringify({
+    updatedAt: new Date().toISOString(),
+    marketGroup: MARKET.toBase58(),
+    markets: [{
+      providerMarketId: market.providerMarketId,
+      assetIndex,
+      marketId: marketId.toString(),
+      title: market.title,
+      signature: sig,
+    }],
+  }, null, 2) + "\n");
+  console.log("wrote deployments/devnet-markets.json");
+}
+
+const frontier = decoded.slots.find((slot) => slot.empty && slot.assetIndex === decoded.configured && inScope(slot));
+if (frontier && decoded.freeCount === 0) {
+  console.log("slot", frontier.assetIndex, "is empty. Activating there. No retire.");
+  await activateAt(frontier.assetIndex);
+  process.exit(0);
+}
+if (frontier && decoded.freeCount !== 0) {
+  console.log("empty slot", frontier.assetIndex, "exists, but freeRetired is", decoded.freeCount, "so the program rejects an append. Looking for a retired slot.");
+}
+
+const retired = decoded.slots.find((slot) => inScope(slot) && slot.lifecycle === RETIRED);
+if (retired && decoded.freeCount > 0) {
+  console.log("slot", retired.assetIndex, "is already retired. Activating there.");
+  await activateAt(retired.assetIndex);
+  process.exit(0);
+}
+
+const retireOrder = decoded.slots
+  .filter((slot) => inScope(slot) && !slot.empty && slot.lifecycle !== RETIRED && slot.lifecycle !== EMPTY)
   .sort((left, right) => {
     const rank = (slot) => (slot.lifecycle === DRAIN || slot.lifecycle === RECOVERY ? 0 : expired.has(slot.marketId.toString()) ? 1 : 2);
     return rank(left) - rank(right);
   });
 
-for (const slot of candidates) {
+for (const slot of retireOrder) {
+  if (slot.assetIndex === 0) {
+    console.log("slot 0 is", lifecycleName(slot) + ". The program rejects retire when the asset index is 0, so it cannot be rotated.");
+    continue;
+  }
+  if (slot.lifecycle !== ACTIVE && slot.lifecycle !== DRAIN && slot.lifecycle !== RECOVERY) {
+    console.log("slot", slot.assetIndex, "lifecycle", slot.lifecycle, "is not retirable. Skipping.");
+    continue;
+  }
   const record = recordByMarket.get(slot.marketId.toString());
   if (record && expired.has(slot.marketId.toString())) {
     try {
@@ -200,63 +287,51 @@ for (const slot of candidates) {
       data: retireData(slot.assetIndex, slot.marketId, slotNow),
     }));
     console.log("retired slot", slot.assetIndex, sig);
-    break;
+    await activateAt(slot.assetIndex);
+    process.exit(0);
   } catch (err) {
     const text = err.message || String(err);
     if (text.includes("0x15")) {
-      console.log("slot", slot.assetIndex, "blocked by 0x15 (EngineLockActive: positions or market lock). Trying the next slot.");
+      console.log("slot", slot.assetIndex, "lifecycle", slot.lifecycle, "is locked (0x15 EngineLockActive). Open positions block retire. Trying the next slot.");
     } else {
       console.log("slot", slot.assetIndex, "retire failed. Trying the next slot.", text.split("\n")[0]);
     }
   }
 }
 
-info = await connection.getAccountInfo(MARKET, "confirmed");
-decoded = readSlots(new Uint8Array(info.data));
-const freeSlots = decoded.slots
-  .filter((slot) => slot.assetIndex > 0 && slot.lifecycle === RETIRED)
-  .map((slot) => slot.assetIndex);
-if (freeSlots.length === 0) {
-  console.error("[rotate] Tried every slot except 0. None came back retired. 0x15 means that slot still has positions or the market lock is on. The program will not free it.");
-  process.exit(1);
+if (freshGroup) {
+  console.log("[rotate] No slot on this group can be reused. Starting a new market group.");
+  const { spawnSync } = await import("node:child_process");
+  const payerPath = keypairPath();
+  const rpc = process.env.DEVNET_RPC_URL || process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com";
+  const result = spawnSync("cargo", [
+    "run", "--quiet", "--manifest-path", "tools/moxie-bootstrap/Cargo.toml", "--",
+    rpc,
+    "vendor/percolator-prog/target/deploy/percolator_prog-keypair.json",
+    "programs/moxie-matcher/target/deploy/moxie_matcher-keypair.json",
+    "programs/moxie-oracle/target/deploy/moxie_oracle-keypair.json",
+    "config/percolator.market-group.json",
+    "deployments/devnet.local.json",
+    payerPath,
+    "deployments/jupiter-live-market.json",
+  ], { stdio: "inherit" });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+  const deployment = JSON.parse(readFileSync("deployments/devnet.local.json", "utf8"));
+  const imported = deployment.importedMarkets?.[0];
+  writeFileSync("deployments/devnet-markets.json", JSON.stringify({
+    updatedAt: new Date().toISOString(),
+    marketGroup: deployment.marketAccount,
+    markets: imported ? [{
+      providerMarketId: imported.providerMarketId,
+      assetIndex: imported.assetIndex,
+      marketId: String(imported.marketId),
+      title: markets[0].title,
+    }] : [],
+  }, null, 2) + "\n");
+  console.log("new market group", deployment.marketAccount);
+  console.log("Set NEXT_PUBLIC_MARKET_ACCOUNT to that address on Vercel, then redeploy. Slot 0 is the group base. The Jupiter market is the next slot.");
+  process.exit(0);
 }
 
-const markets = await jupiterMarkets();
-if (markets.length === 0) throw new Error("deployments/jupiter-live-market.json is missing");
-const mapped = [];
-const nowSec = Math.floor(Date.now() / 1000);
-for (const assetIndex of freeSlots) {
-  const market = markets[mapped.length];
-  if (!market) break;
-  const marketId = decoded.nextMarketId + BigInt(mapped.length);
-  const [record] = PublicKey.findProgramAddressSync(
-    [Buffer.from("imported"), ORACLE_CONFIG.toBuffer(), sha(market.providerMarketId)],
-    ORACLE,
-  );
-  const sig = await send(connection, payer, new TransactionInstruction({
-    programId: ORACLE,
-    keys: [
-      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
-      { pubkey: ORACLE_CONFIG, isSigner: false, isWritable: false },
-      { pubkey: record, isSigner: false, isWritable: true },
-      { pubkey: MARKET, isSigner: false, isWritable: true },
-      { pubkey: PERCOLATOR, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ],
-    data: activateData(market, assetIndex, marketId, nowSec),
-  }));
-  console.log("activated", market.providerMarketId, "slot", assetIndex, "market", marketId.toString(), sig);
-  mapped.push({
-    providerMarketId: market.providerMarketId,
-    assetIndex,
-    marketId: marketId.toString(),
-    title: market.title,
-    signature: sig,
-  });
-}
-
-mkdirSync("deployments", { recursive: true });
-writeFileSync("deployments/devnet-markets.json", JSON.stringify({ updatedAt: new Date().toISOString(), markets: mapped }, null, 2) + "\n");
-console.log("wrote deployments/devnet-markets.json");
-if (mapped.length === 0) process.exit(1);
+console.error("[rotate] No empty slot, and no occupied slot could be retired. Slot 0 cannot be retired. Re-run with --fresh-group to create a new market group.");
+process.exit(1);
