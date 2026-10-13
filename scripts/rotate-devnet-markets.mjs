@@ -177,11 +177,49 @@ async function advanceLifecycle(connection, payer, record) {
   }));
 }
 
+function readMapped() {
+  try {
+    const raw = JSON.parse(readFileSync("deployments/devnet-markets.json", "utf8"));
+    return Array.isArray(raw.markets) ? raw.markets : [];
+  } catch {
+    return [];
+  }
+}
+
 async function jupiterMarkets() {
-  const path = "deployments/jupiter-live-market.json";
-  if (!existsSync(path)) return [];
-  const one = JSON.parse(readFileSync(path, "utf8"));
-  return one?.providerMarketId ? [one] : [];
+  const used = new Set(readMapped().map((row) => row.providerMarketId));
+  const key = process.env.JUPITER_API_KEY;
+  const base = (process.env.JUPITER_PREDICTION_BASE_URL || "https://api.jup.ag/prediction/v1").replace(/\/$/, "");
+  const found = [];
+  if (key) {
+    const query = new URLSearchParams({ includeMarkets: "true", filter: "live", start: "0", end: "40" });
+    const res = await fetch(`${base}/events?${query}`, { headers: { "x-api-key": key, accept: "application/json" } });
+    if (!res.ok) throw new Error("Jupiter events " + res.status);
+    const payload = await res.json();
+    const events = Array.isArray(payload) ? payload : payload.events || payload.data || [];
+    for (const event of events) {
+      for (const market of event.markets || []) {
+        const providerMarketId = market.marketId || market.id;
+        if (!providerMarketId || used.has(providerMarketId) || found.some((row) => row.providerMarketId === providerMarketId)) continue;
+        const pricing = market.pricing || {};
+        const bid = Number(pricing.sellYesPriceUsd);
+        const ask = Number(pricing.buyYesPriceUsd);
+        const close = Date.parse(market.metadata?.closeTime || market.closeTime || "");
+        if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask >= 1 || ask <= bid) continue;
+        if (!Number.isFinite(close) || close < Date.now() + 15 * 60_000) continue;
+        const mark = Math.round(((bid + ask) / 2) * 1_000_000);
+        if (mark < 1 || mark > 999_999) continue;
+        const title = `${event.metadata?.title || event.title || providerMarketId} — ${market.metadata?.title || market.title || ""}`.trim();
+        found.push({ providerMarketId, title, initialMarkE6: mark, closeTimeMs: close });
+        if (found.length === 8) return found;
+      }
+    }
+  }
+  if (found.length === 0 && existsSync("deployments/jupiter-live-market.json")) {
+    const one = JSON.parse(readFileSync("deployments/jupiter-live-market.json", "utf8"));
+    if (one?.providerMarketId && !used.has(one.providerMarketId)) found.push(one);
+  }
+  return found;
 }
 
 const rpc = process.env.DEVNET_RPC_URL || process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com";
@@ -213,12 +251,11 @@ for (const slot of decoded.slots) {
 
 const inScope = (slot) => targetSlot === null || slot.assetIndex === targetSlot;
 
-async function activateAt(assetIndex) {
+async function activateAt(assetIndex, market, mapped) {
   info = await connection.getAccountInfo(MARKET, "confirmed");
   decoded = readSlots(new Uint8Array(info.data));
-  const market = markets[0];
   const marketId = decoded.nextMarketId;
-  console.log("activating through Percolator. The oracle follow-up is locked while this group still has positions.");
+  console.log("activating", market.providerMarketId, "into slot", assetIndex);
   const sig = await send(connection, payer, new TransactionInstruction({
     programId: PERCOLATOR,
     keys: [
@@ -228,35 +265,47 @@ async function activateAt(assetIndex) {
     data: activatePercolatorData(assetIndex, marketId, market.initialMarkE6, payer.publicKey.toBuffer()),
   }));
   console.log("activated", market.providerMarketId, "slot", assetIndex, "market", marketId.toString(), sig);
+  mapped.push({
+    providerMarketId: market.providerMarketId,
+    assetIndex,
+    marketId: marketId.toString(),
+    title: market.title,
+    signature: sig,
+  });
   mkdirSync("deployments", { recursive: true });
   writeFileSync("deployments/devnet-markets.json", JSON.stringify({
     updatedAt: new Date().toISOString(),
     marketGroup: MARKET.toBase58(),
-    markets: [{
-      providerMarketId: market.providerMarketId,
-      assetIndex,
-      marketId: marketId.toString(),
-      title: market.title,
-      signature: sig,
-    }],
+    markets: mapped,
   }, null, 2) + "\n");
-  console.log("wrote deployments/devnet-markets.json");
 }
 
-const frontier = decoded.slots.find((slot) => slot.empty && slot.assetIndex === decoded.configured && inScope(slot));
-if (frontier && decoded.freeCount === 0) {
-  console.log("slot", frontier.assetIndex, "is empty. Activating there. No retire.");
-  await activateAt(frontier.assetIndex);
-  process.exit(0);
+const mapped = readMapped();
+let cursor = 0;
+let activated = 0;
+while (cursor < markets.length) {
+  info = await connection.getAccountInfo(MARKET, "confirmed");
+  decoded = readSlots(new Uint8Array(info.data));
+  const frontier = decoded.slots.find((slot) => slot.empty && slot.assetIndex === decoded.configured && inScope(slot));
+  if (!frontier || decoded.freeCount !== 0) break;
+  await activateAt(frontier.assetIndex, markets[cursor], mapped);
+  cursor += 1;
+  activated += 1;
 }
-if (frontier && decoded.freeCount !== 0) {
-  console.log("empty slot", frontier.assetIndex, "exists, but freeRetired is", decoded.freeCount, "so the program rejects an append. Looking for a retired slot.");
+if (activated > 0) {
+  info = await connection.getAccountInfo(MARKET, "confirmed");
+  decoded = readSlots(new Uint8Array(info.data));
+  const empty = decoded.slots.filter((slot) => slot.empty).map((slot) => slot.assetIndex);
+  console.log("activated", activated, "market(s). wrote deployments/devnet-markets.json");
+  console.log("empty slots left:", empty.length ? empty.join(", ") : "none");
+  console.log("slot 0 cannot be replaced. A drain-only slot with positions cannot be replaced either.");
+  process.exit(0);
 }
 
 const retired = decoded.slots.find((slot) => inScope(slot) && slot.lifecycle === RETIRED);
 if (retired && decoded.freeCount > 0) {
   console.log("slot", retired.assetIndex, "is already retired. Activating there.");
-  await activateAt(retired.assetIndex);
+  await activateAt(retired.assetIndex, markets[cursor] || markets[0], mapped);
   process.exit(0);
 }
 
@@ -295,7 +344,8 @@ for (const slot of retireOrder) {
       data: retireData(slot.assetIndex, slot.marketId, slotNow),
     }));
     console.log("retired slot", slot.assetIndex, sig);
-    await activateAt(slot.assetIndex);
+    if (cursor >= markets.length) throw new Error("no Jupiter market left to activate");
+    await activateAt(slot.assetIndex, markets[cursor], mapped);
     process.exit(0);
   } catch (err) {
     const text = err.message || String(err);
