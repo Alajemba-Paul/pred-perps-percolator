@@ -186,6 +186,17 @@ function readMapped() {
   }
 }
 
+function closeMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value < 10_000_000_000 ? value * 1000 : value;
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n < 10_000_000_000 ? n * 1000 : n;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function priceE6(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return null;
@@ -210,22 +221,26 @@ async function jupiterMarkets() {
       const events = Array.isArray(payload) ? payload : payload.events || payload.data || payload.items || [];
       if (!Array.isArray(events) || events.length === 0) break;
       eventCount += events.length;
+      let sample = null;
       for (const event of events) {
-        for (const market of event.markets || []) {
+        const markets = Array.isArray(event.markets) ? event.markets : event.market ? [event.market] : [];
+        if (!sample && markets[0]) sample = { eventKeys: Object.keys(event), marketKeys: Object.keys(markets[0]), close: markets[0].closeTime ?? markets[0].metadata?.closeTime, pricing: markets[0].pricing };
+        for (const market of markets) {
           const providerMarketId = market.marketId || market.id;
           if (!providerMarketId || used.has(providerMarketId) || found.some((row) => row.providerMarketId === providerMarketId)) continue;
           const pricing = market.pricing || {};
-          const bid = priceE6(pricing.sellYesPriceUsd);
-          const ask = priceE6(pricing.buyYesPriceUsd);
-          const close = Date.parse(market.metadata?.closeTime || market.closeTime || "");
+          const bid = priceE6(pricing.sellYesPriceUsd ?? pricing.sellYesPrice);
+          const ask = priceE6(pricing.buyYesPriceUsd ?? pricing.buyYesPrice);
+          const close = closeMs(market.metadata?.closeTime ?? market.closeTime);
           if (bid === null || ask === null || bid <= 0 || ask >= 1_000_000 || ask <= bid) continue;
-          if (!Number.isFinite(close) || close < Date.now() + 15 * 60_000) continue;
+          if (close === null || close < Date.now() + 15 * 60_000) continue;
           const mark = Math.round((bid + ask) / 2);
           const title = `${event.metadata?.title || event.title || providerMarketId} — ${market.metadata?.title || market.title || ""}`.trim();
           found.push({ providerMarketId, title, initialMarkE6: mark, closeTimeMs: close });
           if (found.length === 8) break;
         }
       }
+      if (found.length === 0 && sample) console.log("sample Jupiter market", JSON.stringify(sample));
     }
   }
   console.log("Jupiter events", eventCount, "new markets", found.length, "already deployed", used.size);
