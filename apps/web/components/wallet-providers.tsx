@@ -14,6 +14,7 @@ import {
   useWallets as usePrivySolanaWallets,
   useSignTransaction,
 } from "@privy-io/react-auth/solana";
+import { confirmSignatureHttp, isExpiredBlockhash } from "@/lib/confirm";
 import { ConnectionProvider } from "@solana/wallet-adapter-react";
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 
@@ -24,7 +25,7 @@ export type UnifiedWallet = {
   activePubkey: PublicKey | null;
   isConnecting: boolean;
   error: string | null;
-  signTransaction: (tx: Transaction, connection?: Connection) => Promise<Transaction>;
+  signTransaction: (tx: Transaction) => Promise<Transaction>;
   signAndSendTransaction: (tx: Transaction, connection: Connection) => Promise<string>;
   connectPhantom: () => Promise<void>;
   connectPrivy: () => void;
@@ -158,20 +159,23 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
 
   // Restore Phantom session if saved in localStorage
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("moxie_direct_phantom");
-      if (saved) {
-        setDirectPhantomAddress(saved);
-        if (!authenticated) {
-          setActiveType("phantom");
-        }
-      }
-    }
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("moxie_direct_phantom");
+    const choice = localStorage.getItem("moxie_wallet_choice");
+    if (saved) setDirectPhantomAddress(saved);
+    if (choice === "phantom" || choice === "privy") setActiveType(choice);
+    else if (saved && !authenticated) setActiveType("phantom");
   }, [authenticated]);
 
-  // Determine active address and wallet type
   const { activeAddress, activeWalletType } = useMemo(() => {
-    if (authenticated && wallets[0]?.address) {
+    const phantomChosen = activeType === "phantom" && Boolean(directPhantomAddress);
+    if (phantomChosen) {
+      return {
+        activeAddress: directPhantomAddress,
+        activeWalletType: "phantom" as const,
+      };
+    }
+    if (wallets[0]?.address && (activeType === "privy" || authenticated || !directPhantomAddress)) {
       return {
         activeAddress: wallets[0].address,
         activeWalletType: "privy" as const,
@@ -183,17 +187,11 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
         activeWalletType: "phantom" as const,
       };
     }
-    if (wallets[0]?.address) {
-      return {
-        activeAddress: wallets[0].address,
-        activeWalletType: "privy" as const,
-      };
-    }
     return {
       activeAddress: null,
       activeWalletType: null,
     };
-  }, [authenticated, wallets, directPhantomAddress]);
+  }, [authenticated, wallets, directPhantomAddress, activeType]);
 
   const activePubkey = useMemo(() => {
     if (!activeAddress) return null;
@@ -204,17 +202,17 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
     }
   }, [activeAddress]);
 
-  // Sign Transaction on active wallet - always fetch fresh blockhash immediately before signing
   const signTransaction = useCallback(
-    async (tx: Transaction, connection?: Connection): Promise<Transaction> => {
-      if (connection) {
-        const latest = await connection.getLatestBlockhash("confirmed");
-        tx.recentBlockhash = latest.blockhash;
+    async (tx: Transaction): Promise<Transaction> => {
+      if (!tx.recentBlockhash || !tx.feePayer) {
+        throw new Error("Reconnect wallet");
+      }
+      if (!tx.feePayer.equals(activePubkey!)) {
+        throw new Error("Reconnect wallet");
       }
 
       if (activeWalletType === "privy" && wallets[0]) {
-        const payer = new PublicKey(wallets[0].address);
-        tx.feePayer = payer;
+        if (wallets[0].address !== activePubkey!.toBase58()) throw new Error("Reconnect wallet");
         const serialized = tx.serialize({
           requireAllSignatures: false,
           verifySignatures: false,
@@ -232,72 +230,56 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
           throw new Error("Reconnect wallet");
         }
         const phantom = (window as any).solana;
-        if (!phantom.publicKey) {
-          await phantom.connect();
-        }
-        if (!phantom.publicKey) {
+        if (!phantom.publicKey) await phantom.connect();
+        if (!phantom.publicKey || phantom.publicKey.toBase58() !== activePubkey!.toBase58()) {
           throw new Error("Reconnect wallet");
         }
-        tx.feePayer = phantom.publicKey;
         return await phantom.signTransaction(tx);
       }
 
       throw new Error("Reconnect wallet");
     },
-    [activeWalletType, wallets, privySignTransaction]
+    [activeWalletType, wallets, privySignTransaction, activePubkey]
   );
 
-  // Sign and broadcast with fresh blockhash, retry once on blockhash not found, and show getLogs()
   const signAndSendTransaction = useCallback(
     async (tx: Transaction, connection: Connection): Promise<string> => {
-      if (!activePubkey) {
-        throw new Error("Reconnect wallet");
-      }
+      if (!activePubkey) throw new Error("Reconnect wallet");
 
       let attempt = 0;
       while (attempt < 2) {
         attempt++;
+        const latest = await connection.getLatestBlockhash("confirmed");
         tx.feePayer = activePubkey;
-        const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-        tx.recentBlockhash = latestBlockhash.blockhash;
+        tx.recentBlockhash = latest.blockhash;
 
         let signedTx: Transaction;
         try {
-          signedTx = await signTransaction(tx, connection);
+          signedTx = await signTransaction(tx);
         } catch (signErr: any) {
           console.error("Sign transaction error:", signErr);
           throw signErr;
         }
-
-        const rawTx = signedTx.serialize();
+        if (signedTx.recentBlockhash !== latest.blockhash) {
+          throw new Error("Wallet changed the blockhash. Reconnect and try again.");
+        }
 
         try {
-          const sig = await connection.sendRawTransaction(rawTx, {
+          const sig = await connection.sendRawTransaction(signedTx.serialize(), {
             skipPreflight: false,
             preflightCommitment: "confirmed",
           });
-          await connection.confirmTransaction(
-            {
-              signature: sig,
-              blockhash: latestBlockhash.blockhash,
-              lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-            },
-            "confirmed"
-          );
+          await confirmSignatureHttp(connection, sig, latest.lastValidBlockHeight);
           return sig;
         } catch (err: any) {
           console.error("sendRawTransaction error (attempt " + attempt + "):", err);
           const rawMsg = err?.message || String(err);
-          const isBlockhashError = /blockhash not found/i.test(rawMsg);
-
-          if (isBlockhashError && attempt === 1) {
-            console.warn("Blockhash not found. Retrying once with fresh blockhash...");
+          if (isExpiredBlockhash(rawMsg) && attempt === 1) {
+            console.warn("Blockhash expired. Asking for a new signature.");
             continue;
           }
-
           const logs = await extractTransactionLogs(err, connection, signedTx);
-          const cleanMessage = parseErrorSummary(err, logs);
-          throw new Error(cleanMessage);
+          throw new Error(parseErrorSummary(err, logs));
         }
       }
 
@@ -320,6 +302,7 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
       setActiveType("phantom");
       if (typeof window !== "undefined") {
         localStorage.setItem("moxie_direct_phantom", pubkeyStr);
+        localStorage.setItem("moxie_wallet_choice", "phantom");
       }
     } catch (err: any) {
       setWalletError(err?.message || "Failed to connect to Phantom.");
@@ -333,6 +316,7 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
   const connectPrivy = useCallback(() => {
     setWalletError(null);
     setActiveType("privy");
+    if (typeof window !== "undefined") localStorage.setItem("moxie_wallet_choice", "privy");
     login({ loginMethods: ["email", "google"] });
   }, [login]);
 
@@ -345,6 +329,7 @@ function UnifiedWalletBridge({ children }: { children: ReactNode }) {
     setActiveType(null);
     if (typeof window !== "undefined") {
       localStorage.removeItem("moxie_direct_phantom");
+      localStorage.removeItem("moxie_wallet_choice");
       if ((window as any).solana?.disconnect) {
         try {
           (window as any).solana.disconnect();

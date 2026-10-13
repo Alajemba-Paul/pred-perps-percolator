@@ -202,7 +202,7 @@ export function Terminal({ market }: { market: Market }) {
   const maxPayout = estimatedContracts * 1.0;
   const potentialProfit = Math.max(0, maxPayout - numSizeUsdc);
 
-  const isTradable = market.status === "active" || market.status === 1;
+  const isTradable = (market.status === "active" || market.status === 1) && /^\d+$/.test(String(market.marketId));
 
   // Execute trade (Single click handler, no page-load cache comparison)
   async function handleExecuteTrade() {
@@ -335,6 +335,23 @@ export function Terminal({ market }: { market: Market }) {
       }
       if (30 > lpFeeCapBps) {
         setTradeError(`Market fee is above the LP cap (${lpFeeCapBps} bps).`);
+        setIsSubmitting(false);
+        return;
+      }
+
+      const contractUsdc = Number(chainPrice) / 1_000_000;
+      if (!(contractUsdc > 0)) {
+        setTradeError("This market has no usable price yet.");
+        setIsSubmitting(false);
+        return;
+      }
+      if (numSizeUsdc + 1e-9 < contractUsdc) {
+        setTradeError(`One contract costs about ${contractUsdc.toFixed(2)} USDC. Increase the size.`);
+        setIsSubmitting(false);
+        return;
+      }
+      if (numSizeUsdc > contractUsdc + 1e-6) {
+        setTradeError(`This market accepts 1 contract per trade (about ${contractUsdc.toFixed(2)} USDC). Lower the size.`);
         setIsSubmitting(false);
         return;
       }
@@ -487,7 +504,7 @@ export function Terminal({ market }: { market: Market }) {
         return;
       }
 
-      if (fullMsg.includes("0x9") || fullMsg.includes("Custom: 9")) {
+      if (fullMsg.includes("custom program error: 0x9") || fullMsg.includes("Custom: 9")) {
         const ix = fullMsg.match(/Instruction (\d+)/);
         const where = ix ? `instruction ${ix[1]}` : "trade";
         setTradeError(logLine ? `${logLine}` : `Invalid instruction on ${where}: ${rawMsg}`);
@@ -536,7 +553,12 @@ export function Terminal({ market }: { market: Market }) {
         </div>
       </section>
 
-      {!isTradable && (
+      {!/^\d+$/.test(String(market.marketId)) && (
+        <div style={{ background: "rgba(255,180,0,0.1)", border: "1px solid rgba(255,180,0,0.3)", borderRadius: "6px", padding: "12px 16px", color: "#ffb400", fontSize: "13px" }}>
+          This event is not imported on devnet yet. Trading stays off until an operator activates it.
+        </div>
+      )}
+      {(market.status !== "active" && market.status !== 1) && (
         <div style={{ background: "rgba(255,180,0,0.1)", border: "1px solid rgba(255,180,0,0.3)", borderRadius: "6px", padding: "12px 16px", color: "#ffb400", fontSize: "13px" }}>
           This market is closed. Trading is disabled.
         </div>

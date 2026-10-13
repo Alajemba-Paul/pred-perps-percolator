@@ -25,8 +25,7 @@ function getPayerKeypair(): Keypair | null {
   }
 
   const idPaths = [
-    "C:\\Users\\OBINNA\\.config\\solana\\id.json",
-    process.env.HOME ? `${process.env.HOME}/.config/solana/id.json` : "",
+    process.env.VERCEL ? "" : (process.env.HOME ? `${process.env.HOME}/.config/solana/id.json` : ""),
   ].filter(Boolean);
 
   for (const p of idPaths) {

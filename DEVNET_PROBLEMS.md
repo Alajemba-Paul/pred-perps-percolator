@@ -2,9 +2,39 @@
 
 **Repo:** https://github.com/Alajemba-Paul/pred-perps-percolator
 **Demo:** https://moxie-devnet-demo.vercel.app
-**Reviewed against:** `main` at `6b8e7b4` (13 October 2026). The trade and deploy code is unchanged since `a1d2d11`.
+**Status:** client confirm path fixed in this commit. On-chain matcher rotation and slot replacement are still operator steps. This environment has no payer key, so no devnet signature was produced here.
 
-Two different “it did not land on devnet” failures are mixed together:
+## What changed
+
+- `signAndSendTransaction` fetches one blockhash, the wallet signs that hash, and confirmation polls `getSignatureStatuses` over HTTP with the same `lastValidBlockHeight`. It no longer calls `confirmTransaction`, which waited on a different hash and on `signatureSubscribe`.
+- A dead blockhash, including `TransactionExpiredBlockheightExceededError`, asks for one new signature.
+- If the user last chose Phantom, Privy does not replace that fee payer.
+- A trade signs 1 contract only when the typed USDC size matches that one contract. A larger or smaller size is rejected before the wallet opens.
+- Jupiter cards whose id is not a number show "not imported" and the trade button stays off.
+- `deploy:devnet:live` exits 1 and says bootstrap was not started. It no longer exits 0.
+- Faucet routes no longer look for `C:\Users\OBINNA\.config\solana\id.json`. On Vercel they use `DEVNET_PAYER_SECRET` only.
+
+## Still deferred, and why
+
+- The matcher context `GhtKPreRFiBCVTpGSXkqWXbux1gtoCRayXQZgnHne3JA` is still expired on devnet until someone with the payer key runs `pnpm reauthorize:lp` from the project folder. That script already exists. It writes public addresses to `apps/web/public/lp.json` and prints the three `NEXT_PUBLIC_*` values. It does not add a new program instruction. This sandbox has no key, so it was not run.
+- Retiring a full slot and activating a Jupiter market is not implemented. Percolator returns `0x15` if you append past 8 slots, and this change does not invent a retire instruction. The deploy command now fails closed instead of pretending the markets were indexed.
+- A confirmed explorer link is not available from this environment.
+
+## How to reauthorize the matcher
+
+From `C:\Users\OBINNA\Documents\pred-perps-percolator`, with `.env` pointing at devnet and the Solana CLI key that owns the market:
+
+```
+pnpm reauthorize:lp
+```
+
+Commit `apps/web/public/lp.json` (addresses only). Set the three printed variables on Vercel and redeploy. Do not commit the payer key or `.env`.
+
+## Original findings
+
+Reviewed against `6b8e7b4`. Sections 1.1 and 1.2 are fixed in the client. Section 1.4 and section 2 stay true on-chain until the operator runs `pnpm reauthorize:lp` and a slot is retired.
+
+Two different “it did not land on devnet” failures were mixed together:
 
 1. A user clicks Long or Short, the wallet asks for a signature, and no confirmed devnet transaction shows up.
 2. `pnpm run deploy:devnet:live` prints success and writes nothing new on-chain. Markets are never activated. The script exits 0 on purpose.
