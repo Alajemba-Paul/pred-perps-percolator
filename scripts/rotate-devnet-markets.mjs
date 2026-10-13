@@ -121,17 +121,30 @@ function activateData(market, assetIndex, marketId, nowSec) {
   ]);
 }
 
-async function expiredIds() {
+async function indexedRows() {
   const raw = process.env.MOXIE_API_URL || "https://pred-perps-percolator.onrender.com";
   try {
     const res = await fetch(raw.replace(/\/v1$/, "") + "/v1/markets");
-    if (!res.ok) return new Set();
+    if (!res.ok) return [];
     const rows = await res.json();
-    const now = Math.floor(Date.now() / 1000);
-    return new Set(rows.filter((row) => Number(row.closeTime) > 0 && Number(row.closeTime) < now).map((row) => String(row.marketId)));
+    return Array.isArray(rows) ? rows : [];
   } catch {
-    return new Set();
+    return [];
   }
+}
+
+async function advanceLifecycle(connection, payer, record) {
+  await send(connection, payer, new TransactionInstruction({
+    programId: ORACLE,
+    keys: [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
+      { pubkey: ORACLE_CONFIG, isSigner: false, isWritable: false },
+      { pubkey: record, isSigner: false, isWritable: true },
+      { pubkey: MARKET, isSigner: false, isWritable: true },
+      { pubkey: PERCOLATOR, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from([6]),
+  }));
 }
 
 async function jupiterMarkets() {
@@ -149,15 +162,34 @@ console.log("payer", payer.publicKey.toBase58());
 let info = await connection.getAccountInfo(MARKET, "confirmed");
 if (!info) throw new Error("market account missing");
 let decoded = readSlots(new Uint8Array(info.data));
-const expired = await expiredIds();
+const rows = await indexedRows();
+const nowSecIndex = Math.floor(Date.now() / 1000);
+const expired = new Set(rows.filter((row) => Number(row.closeTime) > 0 && Number(row.closeTime) < nowSecIndex).map((row) => String(row.marketId)));
+const recordByMarket = new Map(rows.filter((row) => row.address && row.marketId).map((row) => [String(row.marketId), row.address]));
 const slotNow = await connection.getSlot("confirmed");
 
+console.log("market slots:");
 for (const slot of decoded.slots) {
-  if (slot.assetIndex === 0 || slot.marketId === 0n) continue;
-  if (slot.lifecycle === RETIRED) continue;
-  const closed = slot.lifecycle === DRAIN || slot.lifecycle === RECOVERY;
-  const stale = slot.lifecycle === ACTIVE && expired.has(slot.marketId.toString());
-  if (!closed && !stale) continue;
+  console.log(`  slot ${slot.assetIndex} market=${slot.marketId} lifecycle=${slot.lifecycle}`);
+}
+
+const candidates = decoded.slots
+  .filter((slot) => slot.assetIndex > 0 && slot.marketId !== 0n && slot.lifecycle !== RETIRED)
+  .sort((left, right) => {
+    const rank = (slot) => (slot.lifecycle === DRAIN || slot.lifecycle === RECOVERY ? 0 : expired.has(slot.marketId.toString()) ? 1 : 2);
+    return rank(left) - rank(right);
+  });
+
+for (const slot of candidates) {
+  const record = recordByMarket.get(slot.marketId.toString());
+  if (record && expired.has(slot.marketId.toString())) {
+    try {
+      await advanceLifecycle(connection, payer, new PublicKey(record));
+      console.log("advanced lifecycle for slot", slot.assetIndex);
+    } catch (err) {
+      console.log("lifecycle advance skipped for slot", slot.assetIndex, (err.message || err).split("\n")[0]);
+    }
+  }
   try {
     const sig = await send(connection, payer, new TransactionInstruction({
       programId: PERCOLATOR,
@@ -168,8 +200,14 @@ for (const slot of decoded.slots) {
       data: retireData(slot.assetIndex, slot.marketId, slotNow),
     }));
     console.log("retired slot", slot.assetIndex, sig);
+    break;
   } catch (err) {
-    console.error("retire failed for slot", slot.assetIndex, err.message || err);
+    const text = err.message || String(err);
+    if (text.includes("0x15")) {
+      console.log("slot", slot.assetIndex, "blocked by 0x15 (EngineLockActive: positions or market lock). Trying the next slot.");
+    } else {
+      console.log("slot", slot.assetIndex, "retire failed. Trying the next slot.", text.split("\n")[0]);
+    }
   }
 }
 
@@ -179,7 +217,7 @@ const freeSlots = decoded.slots
   .filter((slot) => slot.assetIndex > 0 && slot.lifecycle === RETIRED)
   .map((slot) => slot.assetIndex);
 if (freeSlots.length === 0) {
-  console.error("[rotate] No slot was freed. Active markets were left in place. Open positions block retire.");
+  console.error("[rotate] Tried every slot except 0. None came back retired. 0x15 means that slot still has positions or the market lock is on. The program will not free it.");
   process.exit(1);
 }
 
